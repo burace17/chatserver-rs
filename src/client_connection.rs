@@ -67,7 +67,7 @@ pub async fn process_client(addr: SocketAddr, websocket: WebSocketStream, tx: mp
             ClientStreamMessage::ManagerData(response) => {
                 match response {
                     ServerCommandResponse::Text(msg) => ws_tx.send(tungstenite::Message::Text(msg)).await?,
-                    ServerCommandResponse::Disconnect(_) => ws_tx.close().await?
+                    ServerCommandResponse::Disconnect(_) => { ws_tx.close().await?; break; }
                 }
             }
             ClientStreamMessage::WebSocketPing(data) => ws_tx.send(tungstenite::Message::Pong(data)).await?,

@@ -16,7 +16,9 @@ pub enum ConfigReadError {
     #[error("bind_ip is missing or invalid.")]
     MissingBindIP,
     #[error("bind_port is missing or invalid.")]
-    MissingBindPort
+    MissingBindPort,
+    #[error("database path is missing")]
+    MissingDatabasePath
 }
 
 impl From<std::io::Error> for ConfigReadError {
@@ -29,7 +31,8 @@ pub struct ServerConfig {
     pub cert: Vec<u8>,
     pub cert_password: String,
     pub bind_ip: String,
-    pub port: u64
+    pub port: u64,
+    pub db_path: String
 }
 
 pub fn parse_config(config_path: &str) -> Result<ServerConfig, ConfigReadError> {
@@ -47,11 +50,14 @@ pub fn parse_config(config_path: &str) -> Result<ServerConfig, ConfigReadError> 
     let bind_ip = config["bind_ip"].as_str().ok_or(ConfigReadError::MissingBindIP)?;
     let bind_port = config["bind_port"].as_u64().ok_or(ConfigReadError::MissingBindPort)?;
 
+    let db_path = config["db_path"].as_str().ok_or(ConfigReadError::MissingDatabasePath)?;
+
     let server_config = ServerConfig{
         cert: pkcs12,
         cert_password: cert_password.to_string(),
         bind_ip: bind_ip.to_string(),
-        port: bind_port
+        port: bind_port,
+        db_path: db_path.to_string()
     };
     
     Ok(server_config)

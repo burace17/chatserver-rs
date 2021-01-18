@@ -9,15 +9,36 @@ use tokio_native_tls::{TlsAcceptor, TlsStream};
 use super::config_parser::ServerConfig;
 use super::client_connection;
 use super::commands;
+use super::db_interaction;
 
 pub type WebSocketStream = tokio_tungstenite::WebSocketStream<TlsStream<TcpStream>>;
 pub type Sender = mpsc::Sender<ServerCommandResponse>;
 
-/* pub struct User {
-    username: String,
-    nickname: String,
+pub struct User {
+    pub id: i64,
+    pub username: String,
+    pub nickname: String,
     connections: HashSet<SocketAddr>
-} */
+}
+
+impl User {
+    pub fn new(id: i64, username: &str, nickname: &str) -> Self {
+        User{
+            id: id,
+            username: username.to_string(),
+            nickname: nickname.to_string(),
+            connections: HashSet::new()
+        }
+    }
+
+    pub fn add_connection(&mut self, addr: SocketAddr) {
+        self.connections.insert(addr);
+    }
+
+    pub fn remove_connection(&mut self, addr: &SocketAddr) {
+        self.connections.remove(&addr);
+    }
+}
 
 #[derive(Clone)]
 pub struct UnauthedUser {
@@ -32,17 +53,19 @@ impl UnauthedUser {
 }
 
 pub struct ChatServer {
+    pub db_path: String,
     unauth_connections: HashMap<SocketAddr, UnauthedUser>,
     connections: HashMap<SocketAddr, String>,
-    //users: HashMap<String, User>
+    users: HashMap<String, User>
 }
 
 impl ChatServer {
-    fn new() -> Self {
+    fn new(db_path: &str, users: HashMap<String, User>) -> Self {
         ChatServer{
+            db_path: db_path.to_string(),
             unauth_connections: HashMap::new(),
             connections: HashMap::new(),
-            //users: HashMap::new()
+            users: users
         }
     }
 
@@ -67,13 +90,26 @@ impl ChatServer {
 
     pub fn add_connection(&mut self, addr: SocketAddr, username: String) {
         println!("Added connection: {}", addr);
+        if let Some(user) = self.users.get_mut(&username) {
+            user.add_connection(addr);
+        }
         self.connections.insert(addr, username);
     }
 
     pub fn remove_connection(&mut self, addr: SocketAddr) {
-        println!("Removed connection: {}", addr);
-        // TODO: update the sockets stored in users.
-        self.connections.remove(&addr);
+        if self.connections.contains_key(&addr) {
+            let username = &self.connections[&addr];
+            if let Some(user) = self.users.get_mut(username) {
+                user.remove_connection(&addr);
+            }
+            
+            println!("Removed connection: {}", addr);
+            self.connections.remove(&addr);
+        }
+    }
+
+    pub fn add_user(&mut self, user: User) {
+        self.users.insert(user.username.to_string(), user);
     }
 }
 
@@ -90,8 +126,12 @@ pub enum ServerCommandResponse {
     Disconnect(String)
 }
 
-async fn server_worker_impl(mut receiver: mpsc::Receiver<Message>) {
-    let mut server = ChatServer::new();
+async fn server_worker_impl(mut receiver: mpsc::Receiver<Message>, db_path: &str) {
+    let mut server = {
+        let users = db_interaction::get_users(db_path).unwrap();
+        ChatServer::new(db_path, users)
+    };
+
     let mut all_connections: HashMap<SocketAddr, Sender> = HashMap::new();
 
     while let Some(message) = receiver.recv().await {
@@ -130,10 +170,13 @@ pub async fn start_server(config: &ServerConfig) {
         Arc::new(a)
     };
 
+    db_interaction::setup_database(&config.db_path).unwrap();
+
     let listener = TcpListener::bind(format!("{}:{}", &config.bind_ip, &config.port)).await.unwrap();
     let (sender, receiver) = mpsc::channel::<Message>(32); // TODO: What should this be?
+    let db_path = config.db_path.clone();
     tokio::spawn(async move {
-         server_worker_impl(receiver).await;
+         server_worker_impl(receiver, &db_path).await;
     });
 
     loop {

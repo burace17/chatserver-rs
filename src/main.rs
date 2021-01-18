@@ -1,8 +1,9 @@
 use std::env;
 mod client_connection;
-mod config_parser;
-mod server;
 mod commands;
+mod config_parser;
+mod db_interaction;
+mod server;
 
 #[tokio::main]
 async fn main() {

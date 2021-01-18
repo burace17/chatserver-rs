@@ -2,5 +2,6 @@
 	"cert_path" : "identity.pfx",
 	"cert_password" : "mypassword",
 	"bind_ip" : "0.0.0.0",
-	"bind_port" : 1337
+	"bind_port" : 1337,
+	"db_path" : "db.sqlite"
 }

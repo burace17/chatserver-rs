@@ -4,3 +4,4 @@ key.pem
 identity.pfx
 *~
 .vscode/
+*.sqlite
