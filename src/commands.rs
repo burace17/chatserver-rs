@@ -7,7 +7,7 @@ use serde_json::json;
 use thiserror::Error;
 use super::server::ChatServer;
 use super::server::ServerCommandResponse;
-use super::server::User;
+use super::user::User;
 use super::db_interaction;
 
 #[derive(Error, Debug)]
@@ -29,7 +29,7 @@ pub enum CommandError {
 }
 
 lazy_static! {
-    static ref UP: Regex = Regex::new("^[A-Za-z0-9_-]*$").unwrap();
+    static ref USERNAME_PATTERN: Regex = Regex::new("^[A-Za-z0-9_-]*$").unwrap();
 }
 
 async fn handle_ident(state: &mut ChatServer, client: SocketAddr, json: &Value) -> Result<(), CommandError> {
@@ -38,7 +38,7 @@ async fn handle_ident(state: &mut ChatServer, client: SocketAddr, json: &Value) 
     let password = json["password"].as_str().ok_or(CommandError::InvalidArguments)?.to_lowercase();
 
     // check username for invalid characters
-    UP.is_match(&username).ok_or(CommandError::InvalidUsername)?;
+    USERNAME_PATTERN.is_match(&username).ok_or(CommandError::InvalidUsername)?;
 
     // check password
     let login_succeeded = db_interaction::verify_login(&state.db_path, &username, &password)?;
@@ -67,7 +67,7 @@ async fn handle_register(state: &mut ChatServer, client: SocketAddr, json: &Valu
     let password = json["password"].as_str().ok_or(CommandError::InvalidArguments)?.to_lowercase();
 
     // check username for invalid characters
-    UP.is_match(&username).ok_or(CommandError::InvalidUsername)?;
+    USERNAME_PATTERN.is_match(&username).ok_or(CommandError::InvalidUsername)?;
 
     let user_id = db_interaction::register_user(&state.db_path, &username, &password)?;
 

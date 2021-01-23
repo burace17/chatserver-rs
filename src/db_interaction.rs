@@ -1,7 +1,7 @@
 use rusqlite::{Connection, Result, NO_PARAMS, params};
 use sodiumoxide::crypto::pwhash::argon2i13::{pwhash, pwhash_verify, HashedPassword, OPSLIMIT_INTERACTIVE, MEMLIMIT_INTERACTIVE};
 use std::collections::HashMap;
-use super::server::User;
+use super::user::User;
 use thiserror::Error;
 
 #[derive(Debug, Error)]

@@ -1,7 +1,10 @@
+use futures_util::StreamExt;
 use native_tls::Identity;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::net::SocketAddr;
+use std::pin::Pin;
+use std::task::{Context, Poll};
 use std::time::Instant;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::mpsc;
@@ -10,45 +13,42 @@ use super::config_parser::ServerConfig;
 use super::client_connection;
 use super::commands;
 use super::db_interaction;
+use super::user::{User, UnauthedUser};
 
 pub type WebSocketStream = tokio_tungstenite::WebSocketStream<TlsStream<TcpStream>>;
 pub type Sender = mpsc::Sender<ServerCommandResponse>;
 
-pub struct User {
-    pub id: i64,
-    pub username: String,
-    pub nickname: String,
-    connections: HashSet<SocketAddr>
+#[derive(Debug)]
+pub enum Message {
+    NewConnection((SocketAddr, mpsc::Sender<ServerCommandResponse>)),
+    NewData((SocketAddr, String)),
+    Disconnected(SocketAddr),
+    CheckUnauthUsers
 }
 
-impl User {
-    pub fn new(id: i64, username: &str, nickname: &str) -> Self {
-        User{
-            id: id,
-            username: username.to_string(),
-            nickname: nickname.to_string(),
-            connections: HashSet::new()
+#[derive(Debug)]
+pub enum ServerCommandResponse {
+    Text(String),
+    Disconnect(String)
+}
+
+struct WorkerStream {
+    receiver: Pin<Box<dyn tokio_stream::Stream<Item = Message> + Send>>,
+    timer: tokio::time::Interval
+}
+
+impl tokio_stream::Stream for WorkerStream {
+    type Item = Message;
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        if let Poll::Ready(Some(v)) = Pin::new(&mut self.receiver).poll_next(cx) {
+            Poll::Ready(Some(v))
         }
-    }
-
-    pub fn add_connection(&mut self, addr: SocketAddr) {
-        self.connections.insert(addr);
-    }
-
-    pub fn remove_connection(&mut self, addr: &SocketAddr) {
-        self.connections.remove(&addr);
-    }
-}
-
-#[derive(Clone)]
-pub struct UnauthedUser {
-    pub tx: Sender,
-    pub time: Instant
-}
-
-impl UnauthedUser {
-    fn new(tx: Sender, time: Instant) -> Self {
-        UnauthedUser{ tx, time }
+        else if let Poll::Ready(_) = Pin::new(&mut self.timer).poll_tick(cx) {
+            Poll::Ready(Some(Message::CheckUnauthUsers)) 
+        }
+        else {
+            Poll::Pending
+        }
     }
 }
 
@@ -71,7 +71,7 @@ impl ChatServer {
 
     pub fn add_unauth_connection(&mut self, addr: SocketAddr, sender: Sender) {
         println!("Added unauth connection: {}", addr);
-        self.unauth_connections.insert(addr, UnauthedUser::new(sender, Instant::now()));
+        self.unauth_connections.insert(addr, UnauthedUser::new(sender));
     }
 
     pub fn remove_unauth_connection(&mut self, addr: SocketAddr) {
@@ -85,6 +85,20 @@ impl ChatServer {
         }
         else {
             None
+        }
+    }
+
+    // Disconnects any unauthenticated users that haven't identified themselves in the right amount of time
+    pub async fn disconnect_unauth_users(&self) {
+        let now = Instant::now();
+        let max_dur = std::time::Duration::from_secs(30);
+        for client in self.unauth_connections.values().filter(|c| now.duration_since(c.time) > max_dur) {
+            if let Err(e) = client.tx.send(ServerCommandResponse::Disconnect("Didn't authenticate in time.".to_string())).await {
+                println!("Couldn't send error to client who didn't auth in time: {}", e);
+            }
+            else {
+                println!("Disconnecting client who didn't auth in time");
+            }
         }
     }
 
@@ -113,28 +127,30 @@ impl ChatServer {
     }
 }
 
-#[derive(Debug)]
-pub enum Message {
-    NewConnection((SocketAddr, mpsc::Sender<ServerCommandResponse>)),
-    NewData((SocketAddr, String)),
-    Disconnected(SocketAddr)
-}
-
-#[derive(Debug)]
-pub enum ServerCommandResponse {
-    Text(String),
-    Disconnect(String)
-}
-
 async fn server_worker_impl(mut receiver: mpsc::Receiver<Message>, db_path: &str) {
     let mut server = {
         let users = db_interaction::get_users(db_path).unwrap();
         ChatServer::new(db_path, users)
     };
 
+    // Construct a stream that receives data from either the client thread, or receives a
+    // notification from a timer to check for non-reponsive unauthenticated users.
+    let mut worker_stream = {
+        let rs = Box::pin(async_stream::stream! {
+            while let Some(item) = receiver.recv().await {
+                yield item;
+            }
+        });
+
+        WorkerStream{
+            receiver: rs,
+            timer: tokio::time::interval(std::time::Duration::from_secs(30))
+        }
+    };
+
     let mut all_connections: HashMap<SocketAddr, Sender> = HashMap::new();
 
-    while let Some(message) = receiver.recv().await {
+    while let Some(message) = worker_stream.next().await {
         match message {
             Message::NewConnection((addr, tx)) => {
                 println!("New connection from: {}", addr);
@@ -155,6 +171,9 @@ async fn server_worker_impl(mut receiver: mpsc::Receiver<Message>, db_path: &str
                 server.remove_unauth_connection(addr);
                 server.remove_connection(addr);
                 all_connections.remove(&addr);
+            }
+            Message::CheckUnauthUsers => {
+                server.disconnect_unauth_users().await; 
             }
         }
     }
