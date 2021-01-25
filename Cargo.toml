@@ -12,6 +12,7 @@ tokio-tungstenite = "0.13.0"
 tokio-native-tls = "0.3.0"
 tokio-stream = "0.1.2"
 native-tls = "0.2.7"
+serde = { version = "1.0", features = ["derive"]}
 serde_json = "1.0.61"
 thiserror = "1.0"
 futures-util = "0.3.9"

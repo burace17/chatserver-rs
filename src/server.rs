@@ -1,9 +1,9 @@
 use futures_util::StreamExt;
 use native_tls::Identity;
 use std::collections::HashMap;
-use std::sync::Arc;
 use std::net::SocketAddr;
 use std::pin::Pin;
+use std::sync::Arc;
 use std::task::{Context, Poll};
 use std::time::Instant;
 use tokio::net::{TcpListener, TcpStream};
@@ -14,6 +14,7 @@ use super::client_connection;
 use super::commands;
 use super::db_interaction;
 use super::user::{User, UnauthedUser};
+use super::channel::Channel;
 
 pub type WebSocketStream = tokio_tungstenite::WebSocketStream<TlsStream<TcpStream>>;
 pub type Sender = mpsc::Sender<ServerCommandResponse>;
@@ -52,20 +53,26 @@ impl tokio_stream::Stream for WorkerStream {
     }
 }
 
+#[derive(Clone)]
 pub struct ChatServer {
     pub db_path: String,
-    unauth_connections: HashMap<SocketAddr, UnauthedUser>,
-    connections: HashMap<SocketAddr, String>,
-    users: HashMap<String, User>
+    pub unauth_connections: HashMap<SocketAddr, UnauthedUser>,
+    pub connections: HashMap<SocketAddr, String>,
+    pub users: HashMap<String, User>,
+    pub channels: HashMap<String, Channel>
 }
 
 impl ChatServer {
-    fn new(db_path: &str, users: HashMap<String, User>) -> Self {
+    fn new(db_path: &str) -> Self {
+        let users = db_interaction::get_users(db_path).unwrap();
+        let channels = db_interaction::get_channels(db_path, &users).unwrap();
+
         ChatServer{
             db_path: db_path.to_string(),
             unauth_connections: HashMap::new(),
             connections: HashMap::new(),
-            users: users
+            users: users,
+            channels: channels
         }
     }
 
@@ -102,10 +109,10 @@ impl ChatServer {
         }
     }
 
-    pub fn add_connection(&mut self, addr: SocketAddr, username: String) {
+    pub fn add_connection(&mut self, addr: SocketAddr, username: String, tx: Sender) {
         println!("Added connection: {}", addr);
         if let Some(user) = self.users.get_mut(&username) {
-            user.add_connection(addr);
+            user.add_connection(addr, tx);
         }
         self.connections.insert(addr, username);
     }
@@ -125,13 +132,19 @@ impl ChatServer {
     pub fn add_user(&mut self, user: User) {
         self.users.insert(user.username.to_string(), user);
     }
+
+    pub fn get_user(&self, addr: &SocketAddr) -> Option<&User> {
+        if let Some(username) = self.connections.get(addr) {
+            self.users.get(username)
+        }
+        else {
+            None
+        }
+    }
 }
 
 async fn server_worker_impl(mut receiver: mpsc::Receiver<Message>, db_path: &str) {
-    let mut server = {
-        let users = db_interaction::get_users(db_path).unwrap();
-        ChatServer::new(db_path, users)
-    };
+    let mut server = ChatServer::new(db_path);
 
     // Construct a stream that receives data from either the client thread, or receives a
     // notification from a timer to check for non-reponsive unauthenticated users.

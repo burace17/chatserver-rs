@@ -5,6 +5,7 @@ mod config_parser;
 mod db_interaction;
 mod server;
 mod user;
+mod channel;
 
 #[tokio::main]
 async fn main() {
