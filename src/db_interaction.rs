@@ -12,7 +12,7 @@ pub enum DatabaseError {
     #[error("Password hashing error")]
     PasswordHashError,
     #[error("The data model is no longer valid")]
-    BadDataModel
+    BadDataModel,
 }
 
 fn pwhash_interactive(bytes: &[u8]) -> Result<HashedPassword, ()> {
@@ -70,7 +70,7 @@ pub fn get_users(db_path: &str) -> Result<HashMap<String, User>, DatabaseError> 
         Ok(User::new(row.get(0)?, &row.get::<_, String>(1)?, &row.get::<_, String>(2)?))
     })?;
 
-    for user in user_iter.filter(|u| u.is_ok()).map(|u| u.unwrap()) {
+    for user in user_iter.filter_map(|u| u.ok()) {
         users.insert(user.username.to_string(), user);
     }
     Ok(users)
@@ -89,13 +89,9 @@ pub fn get_channels(db_path: &str, users: &HashMap<String, User>) -> Result<Hash
         Ok((channel_id, channel_name, username))
     })?;
 
-    for (channel_id, channel_name, username) in channel_iter.filter(|u| u.is_ok()).map(|u| u.unwrap()) {
-        if !channels.contains_key(&channel_name) {
-            channels.insert(channel_name.to_string(), Channel::new(channel_id, &channel_name));
-        }
-
+    for (channel_id, channel_name, username) in channel_iter.filter_map(|u| u.ok()) {
+        let chan = channels.entry(channel_name.to_string()).or_insert_with(|| Channel::new(channel_id, &channel_name));
         let user = users.get(&username).ok_or(DatabaseError::BadDataModel)?;
-        let chan = channels.get_mut(&channel_name).unwrap();
         chan.add_user(user);
     }
 
@@ -112,4 +108,10 @@ pub fn join_channel(db_path: &str, user_id: i64, channel_id: i64) -> Result<(), 
     let conn = Connection::open(db_path)?;
     conn.execute("INSERT INTO user_channels VALUES (?, ?);", params![user_id, channel_id])?;
     Ok(())
+}
+
+pub fn add_message(db_path: &str, user_id: i64, channel_id: i64, time: i64, nickname: &str, message: &str) -> Result<i64, DatabaseError> {
+    let conn = Connection::open(db_path)?;
+    conn.execute("INSERT INTO messages VALUES (null, ?, ?, ?, ?, ?);", params![user_id, channel_id, time, nickname, message])?;
+    Ok(conn.last_insert_rowid())
 }

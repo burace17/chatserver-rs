@@ -5,7 +5,7 @@ use serde_json::json;
 pub struct Channel {
     pub id: i64,
     pub name: String,
-    users: Vec<String>
+    pub users: Vec<String>
 }
 
 impl Channel {
