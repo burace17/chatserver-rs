@@ -58,12 +58,16 @@ async fn handle_ident(state: &mut ChatServer, client: SocketAddr, json: &Value) 
     state.remove_unauth_connection(client);
     state.add_connection(client, username.to_string(), info.tx.clone());
 
+    let channels: Vec<String> = state.channels.values().filter(|chan| chan.users.contains(&username))
+                                                       .map(|chan| chan.name.to_string())
+                                                       .collect();
+
     // res 200
     let response = json!({
         "res" : 200,
         "name" : "test",
         "motd" : "None yet",
-        "channels" : [],
+        "channels" : channels,
         "nickname" : username,
     });
 
