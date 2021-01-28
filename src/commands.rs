@@ -42,7 +42,6 @@ lazy_static! {
 }
 
 async fn handle_ident(state: &mut ChatServer, client: SocketAddr, json: &Value) -> Result<(), CommandError> {
-    println!("Got ident");
     let username = json["username"].as_str().ok_or(CommandError::InvalidArguments)?.to_lowercase();
     let password = json["password"].as_str().ok_or(CommandError::InvalidArguments)?.to_lowercase();
 
@@ -62,11 +61,9 @@ async fn handle_ident(state: &mut ChatServer, client: SocketAddr, json: &Value) 
                                                        .map(|chan| chan.name.to_string())
                                                        .collect();
 
-    // res 200
     let response = json!({
-        "res" : 200,
+        "cmd" : "WELCOME",
         "name" : "test",
-        "motd" : "None yet",
         "channels" : channels,
         "nickname" : username,
     });
@@ -76,7 +73,6 @@ async fn handle_ident(state: &mut ChatServer, client: SocketAddr, json: &Value) 
 }
 
 async fn handle_register(state: &mut ChatServer, client: SocketAddr, json: &Value) -> Result<(), CommandError> {
-    println!("Got register");
     let username = json["username"].as_str().ok_or(CommandError::InvalidArguments)?.to_lowercase();
     let password = json["password"].as_str().ok_or(CommandError::InvalidArguments)?.to_lowercase();
 
@@ -96,9 +92,8 @@ async fn handle_register(state: &mut ChatServer, client: SocketAddr, json: &Valu
 
     // res 200
     let response = json!({
-        "res" : 200,
+        "cmd" : "WELCOME",
         "name" : "test",
-        "motd" : "None yet",
         "channels" : [],
         "nickname" : username,
     });
@@ -148,7 +143,7 @@ async fn handle_join(state: &mut ChatServer, client: SocketAddr, json: &Value) -
 
     // Let this user know some information about the channel they joined.
     let json = json!({
-        "res" : 201,
+        "cmd" : "CHANINFO",
         "channel" : channel.serialize(|username| state.users.get(username).cloned())
     });
 
