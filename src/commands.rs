@@ -7,6 +7,9 @@ use std::time::SystemTime;
 use serde_json::Value;
 use serde_json::json;
 use thiserror::Error;
+use tokio::sync::mpsc::error::SendError;
+use tungstenite::protocol::CloseFrame;
+use tungstenite::protocol::frame::coding::CloseCode;
 use super::channel::Channel;
 use super::server::ChatServer;
 use super::server::ServerCommandResponse;
@@ -24,7 +27,7 @@ pub enum CommandError {
     #[error("Invalid username")]
     InvalidUsername,
     #[error("Could not send command response")]
-    SendFailed(#[from] tokio::sync::mpsc::error::SendError<ServerCommandResponse>),
+    SendFailed(Box<SendError<ServerCommandResponse>>),
     #[error("Could not login (dbms error)")]
     LoginDBMSError(#[from] db_interaction::DatabaseError),
     #[error("Could not login")]
@@ -34,7 +37,35 @@ pub enum CommandError {
     #[error("Not in specified channel")]
     NotInChannel,
     #[error("Bad time")]
-    TimeError(#[from] std::time::SystemTimeError)
+    TimeError(#[from] std::time::SystemTimeError),
+    #[error("Didn't auth in time")]
+    DidNotAuth
+}
+
+impl std::convert::From<SendError<ServerCommandResponse>> for CommandError {
+    fn from(error: SendError<ServerCommandResponse>) -> Self {
+        CommandError::SendFailed(Box::new(error))
+    }
+}
+
+pub fn error_to_close_frame<'a>(error: CommandError) -> CloseFrame<'a> {
+    fn to_code(code: u16) -> CloseCode {
+        CloseCode::Library(code)
+    }
+
+    match error {
+        CommandError::MissingCommand => CloseFrame{ code: to_code(4000), reason: "Unknown command".into() },
+        CommandError::InvalidJSON(_) => CloseFrame{ code: to_code(4001), reason: "Invalid JSON".into() },
+        CommandError::InvalidArguments => CloseFrame{ code: to_code(4002), reason: "Invalid command arguments".into() },
+        CommandError::InvalidUsername => CloseFrame{ code: to_code(4003), reason: "Invalid username or password".into() },
+        CommandError::SendFailed(_) => CloseFrame{ code: to_code(4004), reason: "Internal server error".into() },
+        CommandError::LoginDBMSError(_) => CloseFrame{ code: to_code(4005), reason: "Internal server error".into() },
+        CommandError::LoginFailed => CloseFrame{ code: to_code(4006), reason: "Invalid username or password".into() },
+        CommandError::NeedAuth => CloseFrame{ code: to_code(4007), reason: "Need to login to use this command".into() },
+        CommandError::NotInChannel => CloseFrame{ code: to_code(4008), reason: "Need to be in a channel to use this command".into() },
+        CommandError::TimeError(_) => CloseFrame{ code: to_code(4009), reason: "Internal server error".into() },
+        CommandError::DidNotAuth => CloseFrame{ code: to_code(4010), reason: "Did not authenticate in time".into() },
+    }
 }
 
 lazy_static! {

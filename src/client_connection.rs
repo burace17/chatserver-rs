@@ -5,6 +5,7 @@ use std::task::{Context, Poll};
 use std::error::Error;
 use tokio::sync::mpsc;
 use super::server::{WebSocketStream, Message, ServerCommandResponse};
+use super::commands::error_to_close_frame;
 
 struct ClientStream {
     manager_rx: Pin<Box<dyn tokio_stream::Stream<Item = ServerCommandResponse> + Send>>,
@@ -67,7 +68,10 @@ pub async fn process_client(addr: SocketAddr, websocket: WebSocketStream, tx: mp
             ClientStreamMessage::ManagerData(response) => {
                 match response {
                     ServerCommandResponse::Text(msg) => ws_tx.send(tungstenite::Message::Text(msg)).await?,
-                    ServerCommandResponse::Disconnect(_) => { ws_tx.close().await?; break; }
+                    ServerCommandResponse::Disconnect(e) => { 
+                        ws_tx.send(tungstenite::Message::Close(Some(error_to_close_frame(e)))).await?; 
+                        break; 
+                    }
                 }
             }
             ClientStreamMessage::WebSocketPing(data) => ws_tx.send(tungstenite::Message::Pong(data)).await?,

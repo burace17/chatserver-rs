@@ -12,6 +12,7 @@ use tokio_native_tls::{TlsAcceptor, TlsStream};
 use super::config_parser::ServerConfig;
 use super::client_connection;
 use super::commands;
+use super::commands::CommandError;
 use super::db_interaction;
 use super::user::{User, UnauthedUser};
 use super::channel::Channel;
@@ -30,7 +31,7 @@ pub enum Message {
 #[derive(Debug)]
 pub enum ServerCommandResponse {
     Text(String),
-    Disconnect(String)
+    Disconnect(commands::CommandError)
 }
 
 struct WorkerStream {
@@ -77,12 +78,10 @@ impl ChatServer {
     }
 
     pub fn add_unauth_connection(&mut self, addr: SocketAddr, sender: Sender) {
-        println!("Added unauth connection: {}", addr);
         self.unauth_connections.insert(addr, UnauthedUser::new(sender));
     }
 
     pub fn remove_unauth_connection(&mut self, addr: SocketAddr) {
-        println!("Removed unauth connection: {}", addr);
         self.unauth_connections.remove(&addr);
     }
 
@@ -100,7 +99,7 @@ impl ChatServer {
         let now = Instant::now();
         let max_dur = std::time::Duration::from_secs(30);
         for client in self.unauth_connections.values().filter(|c| now.duration_since(c.time) > max_dur) {
-            if let Err(e) = client.tx.send(ServerCommandResponse::Disconnect("Didn't authenticate in time.".to_string())).await {
+            if let Err(e) = client.tx.send(ServerCommandResponse::Disconnect(CommandError::DidNotAuth)).await {
                 println!("Couldn't send error to client who didn't auth in time: {}", e);
             }
             else {
@@ -110,7 +109,6 @@ impl ChatServer {
     }
 
     pub fn add_connection(&mut self, addr: SocketAddr, username: String, tx: Sender) {
-        println!("Added connection: {}", addr);
         if let Some(user) = self.users.get_mut(&username) {
             user.add_connection(addr, tx);
         }
@@ -124,7 +122,6 @@ impl ChatServer {
                 user.remove_connection(&addr);
             }
             
-            println!("Removed connection: {}", addr);
             self.connections.remove(&addr);
         }
     }
@@ -174,7 +171,7 @@ async fn server_worker_impl(mut receiver: mpsc::Receiver<Message>, db_path: &str
                 println!("Received data from {}: {}", addr, data);
                 if let Err(e) = commands::process_command(&mut server, addr, &data).await {
                     println!("Disconnecting client due to invalid command: {}", e);
-                    if let Err(e2) = all_connections[&addr].send(ServerCommandResponse::Disconnect(e.to_string())).await {
+                    if let Err(e2) = all_connections[&addr].send(ServerCommandResponse::Disconnect(e)).await {
                         println!("Failed to disconnect client?! {}", e2); // should never happen, hopefully.
                     }
                 }
