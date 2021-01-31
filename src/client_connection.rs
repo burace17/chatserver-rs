@@ -107,10 +107,12 @@ pub async fn process_client(addr: SocketAddr, websocket: WebSocketStream, tx: mp
             }
             ClientStreamMessage::WebSocketPing(data) => ws_tx.send(tungstenite::Message::Pong(data)).await?,
             ClientStreamMessage::WebSocketText(data) => tx.send(Message::NewData((addr, data))).await?,
-            ClientStreamMessage::WebSocketClose => ws_tx.send(tungstenite::Message::Close(Some(get_normal_close_frame()))).await?
+            ClientStreamMessage::WebSocketClose => {
+                tx.send(Message::Disconnected(addr)).await?;
+                ws_tx.send(tungstenite::Message::Close(Some(get_normal_close_frame()))).await?;
+            }
         }
     }
 
-    tx.send(Message::Disconnected(addr)).await?;
     Ok(())
 }
