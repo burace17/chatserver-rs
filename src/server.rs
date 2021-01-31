@@ -219,9 +219,10 @@ pub async fn start_server(config: &ServerConfig) {
             };
 
             // This sets up the appropriate channels so the manager can communicate with this new client.
-            if let Err(e) = client_connection::process_client(addr, websocket, tx).await {
+            if let Err(_) = client_connection::process_client(addr, websocket, tx).await {
                 // Just logging these errors for now. This may end up being too noisy
-                println!("Error in process_client: {}", e);
+                // yes, these are too noisy
+                //println!("Error in process_client: {}", e);
             }
         });
     }

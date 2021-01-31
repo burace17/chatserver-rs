@@ -4,8 +4,10 @@ use std::pin::Pin;
 use std::task::{Context, Poll};
 use std::error::Error;
 use tokio::sync::mpsc;
+use tungstenite::protocol::CloseFrame;
+use tungstenite::protocol::frame::coding::CloseCode;
 use super::server::{WebSocketStream, Message, ServerCommandResponse};
-use super::commands::{error_to_close_frame, get_normal_close_frame};
+use super::commands::CommandError;
 
 struct ClientStream {
     manager_rx: Pin<Box<dyn tokio_stream::Stream<Item = ServerCommandResponse> + Send>>,
@@ -41,6 +43,33 @@ impl tokio_stream::Stream for ClientStream {
         else {
             Poll::Pending
         }
+    }
+}
+
+fn error_to_close_frame<'a>(error: CommandError) -> CloseFrame<'a> {
+    fn to_code(code: u16) -> CloseCode {
+        CloseCode::Library(code)
+    }
+
+    match error {
+        CommandError::MissingCommand => CloseFrame{ code: to_code(4000), reason: "Unknown command".into() },
+        CommandError::InvalidJSON(_) => CloseFrame{ code: to_code(4001), reason: "Invalid JSON".into() },
+        CommandError::InvalidArguments => CloseFrame{ code: to_code(4002), reason: "Invalid command arguments".into() },
+        CommandError::InvalidUsername => CloseFrame{ code: to_code(4003), reason: "Invalid username or password".into() },
+        CommandError::SendFailed(_) => CloseFrame{ code: to_code(4004), reason: "Internal server error".into() },
+        CommandError::LoginDBMSError(_) => CloseFrame{ code: to_code(4005), reason: "Internal server error".into() },
+        CommandError::LoginFailed => CloseFrame{ code: to_code(4006), reason: "Invalid username or password".into() },
+        CommandError::NeedAuth => CloseFrame{ code: to_code(4007), reason: "Need to login to use this command".into() },
+        CommandError::NotInChannel => CloseFrame{ code: to_code(4008), reason: "Need to be in a channel to use this command".into() },
+        CommandError::TimeError(_) => CloseFrame{ code: to_code(4009), reason: "Internal server error".into() },
+        CommandError::DidNotAuth => CloseFrame{ code: to_code(4010), reason: "Did not authenticate in time".into() },
+    }
+}
+
+fn get_normal_close_frame<'a>() -> CloseFrame<'a> {
+    CloseFrame {
+        code: CloseCode::Normal,
+        reason: "Bye".into()
     }
 }
 
