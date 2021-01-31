@@ -5,7 +5,7 @@ use std::task::{Context, Poll};
 use std::error::Error;
 use tokio::sync::mpsc;
 use super::server::{WebSocketStream, Message, ServerCommandResponse};
-use super::commands::error_to_close_frame;
+use super::commands::{error_to_close_frame, get_normal_close_frame};
 
 struct ClientStream {
     manager_rx: Pin<Box<dyn tokio_stream::Stream<Item = ServerCommandResponse> + Send>>,
@@ -15,6 +15,7 @@ struct ClientStream {
 enum ClientStreamMessage {
     WebSocketText(String),
     WebSocketPing(Vec<u8>),
+    WebSocketClose,
     ManagerData(ServerCommandResponse)
 }
 
@@ -30,6 +31,7 @@ impl tokio_stream::Stream for ClientStream {
                     match packet {
                         tungstenite::Message::Text(msg) => Poll::Ready(Some(ClientStreamMessage::WebSocketText(msg))),
                         tungstenite::Message::Ping(data) => Poll::Ready(Some(ClientStreamMessage::WebSocketPing(data))),
+                        tungstenite::Message::Close(_) => Poll::Ready(Some(ClientStreamMessage::WebSocketClose)),
                         _ => Poll::Ready(None),
                     }
                 },
@@ -75,7 +77,8 @@ pub async fn process_client(addr: SocketAddr, websocket: WebSocketStream, tx: mp
                 }
             }
             ClientStreamMessage::WebSocketPing(data) => ws_tx.send(tungstenite::Message::Pong(data)).await?,
-            ClientStreamMessage::WebSocketText(data) => tx.send(Message::NewData((addr, data))).await?
+            ClientStreamMessage::WebSocketText(data) => tx.send(Message::NewData((addr, data))).await?,
+            ClientStreamMessage::WebSocketClose => ws_tx.send(tungstenite::Message::Close(Some(get_normal_close_frame()))).await?
         }
     }
 

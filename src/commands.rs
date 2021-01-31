@@ -68,6 +68,13 @@ pub fn error_to_close_frame<'a>(error: CommandError) -> CloseFrame<'a> {
     }
 }
 
+pub fn get_normal_close_frame<'a>() -> CloseFrame<'a> {
+    CloseFrame {
+        code: CloseCode::Normal,
+        reason: "Bye".into()
+    }
+}
+
 lazy_static! {
     static ref USERNAME_PATTERN: Regex = Regex::new("^[A-Za-z0-9_-]*$").unwrap();
 }
