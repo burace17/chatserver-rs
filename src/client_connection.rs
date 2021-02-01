@@ -114,5 +114,6 @@ pub async fn process_client(addr: SocketAddr, websocket: WebSocketStream, tx: mp
         }
     }
 
+    tx.send(Message::Disconnected(addr)).await?;
     Ok(())
 }
