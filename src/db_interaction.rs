@@ -1,3 +1,7 @@
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
+ 
 use rusqlite::{Connection, Result, NO_PARAMS, params};
 use sodiumoxide::crypto::pwhash::argon2i13::{pwhash, pwhash_verify, HashedPassword, OPSLIMIT_INTERACTIVE, MEMLIMIT_INTERACTIVE};
 use std::collections::HashMap;
