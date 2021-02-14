@@ -68,7 +68,7 @@ async fn handle_ident(state: &mut ChatServer, client: SocketAddr, json: &Value) 
     let info = state.get_unauthed_connection(client).ok_or(CommandError::InvalidArguments)?;
 
     state.remove_unauth_connection(client);
-    state.add_connection(client, username.to_string(), info.tx.clone());
+    state.add_connection(client, username.to_string(), info.tx.clone()).await;
 
     let channels: Vec<String> = state.channels.values().filter(|chan| chan.users.contains(&username))
                                                        .map(|chan| chan.name.to_string())
@@ -97,13 +97,12 @@ async fn handle_register(state: &mut ChatServer, client: SocketAddr, json: &Valu
     let info = state.get_unauthed_connection(client).ok_or(CommandError::InvalidArguments)?;
 
     state.remove_unauth_connection(client);
-    state.add_connection(client, username.to_string(), info.tx.clone());
+    state.add_connection(client, username.to_string(), info.tx.clone()).await;
 
     let mut user = User::new(user_id, &username, &username);
     user.add_connection(client, info.tx.clone());
     state.add_user(user);
 
-    // res 200
     let response = json!({
         "cmd" : "WELCOME",
         "name" : "test",
