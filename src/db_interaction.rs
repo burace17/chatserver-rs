@@ -73,8 +73,8 @@ pub fn get_users(db_path: &str) -> Result<HashMap<String, User>, DatabaseError> 
     let user_iter = stmt.query_map(NO_PARAMS, |row| {
         let id = row.get(0)?;
         let username = &row.get::<_, String>(1)?;
-        let password = &row.get::<_, String>(2)?;
-        Ok(User::new(id, username, password))
+        let nickname = &row.get::<_, String>(2)?;
+        Ok(User::new(id, username, nickname))
     })?;
 
     for user in user_iter.filter_map(|u| u.ok()) {

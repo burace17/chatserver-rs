@@ -65,20 +65,26 @@ async fn handle_ident(state: &mut ChatServer, client: SocketAddr, json: &Value) 
     let login_succeeded = db_interaction::verify_login(&state.db_path, &username, &password)?;
     login_succeeded.ok_or(CommandError::LoginFailed)?;
 
+    let nickname = state.users.get(&username)
+                              .ok_or(CommandError::InvalidUsername)? // wouldn't expect this to fail.
+                              .nickname
+                              .to_string();
+
     let info = state.get_unauthed_connection(client).ok_or(CommandError::InvalidArguments)?;
 
     state.remove_unauth_connection(client);
     state.add_connection(client, username.to_string(), info.tx.clone()).await;
 
-    let channels: Vec<String> = state.channels.values().filter(|chan| chan.users.contains(&username))
-                                                       .map(|chan| chan.name.to_string())
-                                                       .collect();
+    let channels: Vec<serde_json::Value> = state.channels.values()
+                                              .filter(|chan| chan.users.contains(&username))
+                                              .map(|chan| chan.serialize(|u| state.users.get(u).cloned()))
+                                              .collect();
 
     let response = json!({
         "cmd" : "WELCOME",
         "name" : "test",
         "channels" : channels,
-        "nickname" : username,
+        "nickname" : nickname,
     });
 
     info.tx.send(ServerCommandResponse::Text(response.to_string())).await?;
@@ -93,7 +99,6 @@ async fn handle_register(state: &mut ChatServer, client: SocketAddr, json: &Valu
     USERNAME_PATTERN.is_match(&username).ok_or(CommandError::InvalidUsername)?;
 
     let user_id = db_interaction::register_user(&state.db_path, &username, &password)?;
-
     let info = state.get_unauthed_connection(client).ok_or(CommandError::InvalidArguments)?;
 
     state.remove_unauth_connection(client);
@@ -155,11 +160,11 @@ async fn handle_join(state: &mut ChatServer, client: SocketAddr, json: &Value) -
 
     // Let this user know some information about the channel they joined.
     let json = json!({
-        "cmd" : "CHANINFO",
+        "cmd" : "CHANNELINFO",
         "channel" : channel.serialize(|username| state.users.get(username).cloned())
     });
 
-    user.send_to_all(&json.to_string()).await;
+    user.send_to(&client, &json.to_string()).await;
     Ok(())
 }
 
@@ -170,6 +175,8 @@ async fn handle_msg(state: &ChatServer, client: SocketAddr, json: &Value) -> Res
     channel.users.contains(&user.username).ok_or(CommandError::NotInChannel)?;
 
     let msg_text = json["content"].as_str().ok_or(CommandError::InvalidArguments)?;
+    (msg_text.len() > 0).ok_or(CommandError::InvalidArguments)?;
+
     let time = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH)?.as_secs() as i64;
     let msg_id = db_interaction::add_message(&state.db_path, user.id, channel.id, time, &user.nickname, &msg_text)?;
 

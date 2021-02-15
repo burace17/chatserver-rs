@@ -65,6 +65,14 @@ impl User {
             }
         }
     }
+
+    pub async fn send_to(&self, addr: &SocketAddr, data: &str) {
+        if let Some(tx) = self.connections.get(addr) {
+            if let Err(e) = tx.send(ServerCommandResponse::Text(data.to_string())).await {
+                println!("user:send_to(): failed: {}", e);
+            }
+        }
+    }
 }
 
 impl std::hash::Hash for User {

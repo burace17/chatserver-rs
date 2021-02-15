@@ -35,18 +35,16 @@ impl Channel {
         }
     }
 
-    pub fn serialize<F: Fn(&str) -> Option<User>>(&self, lookup_user: F) -> String {
-        let users: Vec<String> = self.users.iter()
+    pub fn serialize<F: Fn(&str) -> Option<User>>(&self, lookup_user: F) -> serde_json::Value {
+        let users: Vec<User> = self.users.iter()
                                            .filter_map(|username| lookup_user(username))
-                                           .filter_map(|u| serde_json::to_string(&u).ok())
+                                           .map(|u| u.clone())
                                            .collect();
 
-        let json = json!({
+        json!({
             "id" : self.id,
             "name" : self.name,
             "users" : users
-        });
-
-        json.to_string()
+        })
     }
 }

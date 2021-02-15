@@ -5,3 +5,4 @@ identity.pfx
 *~
 .vscode/
 *.sqlite
+.idea/
