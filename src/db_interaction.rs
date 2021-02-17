@@ -1,7 +1,8 @@
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
- 
+
+use multi_map::MultiMap;
 use rusqlite::{Connection, Result, NO_PARAMS, params};
 use sodiumoxide::crypto::pwhash::argon2i13::{pwhash, pwhash_verify, HashedPassword, OPSLIMIT_INTERACTIVE, MEMLIMIT_INTERACTIVE};
 use std::collections::HashMap;
@@ -25,23 +26,23 @@ fn pwhash_interactive(bytes: &[u8]) -> Result<HashedPassword, ()> {
 
 pub fn setup_database(db_path: &str) -> Result<()> {
     let conn = Connection::open(db_path)?;
-    conn.execute("CREATE TABLE IF NOT EXISTS users(id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT UNIQUE NOT NULL, 
+    conn.execute("CREATE TABLE IF NOT EXISTS users(id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT UNIQUE NOT NULL,
                                                    nickname TEXT UNIQUE NOT NULL, password TEXT NOT NULL);", NO_PARAMS)?;
     conn.execute("CREATE TABLE IF NOT EXISTS channels(id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE NOT NULL);", NO_PARAMS)?;
-    conn.execute("CREATE TABLE IF NOT EXISTS user_channels(user_id INTEGER NOT NULL, 
+    conn.execute("CREATE TABLE IF NOT EXISTS user_channels(user_id INTEGER NOT NULL,
                                              channel_id INTEGER NOT NULL,
                                              UNIQUE(user_id, channel_id),
-                                             FOREIGN KEY(user_id) REFERENCES users(id), 
+                                             FOREIGN KEY(user_id) REFERENCES users(id),
                                              FOREIGN KEY(channel_id) REFERENCES channels(id));", NO_PARAMS)?;
-    conn.execute("CREATE TABLE IF NOT EXISTS messages(id INTEGER PRIMARY KEY AUTOINCREMENT, 
-                                             user_id INTEGER NOT NULL, 
+    conn.execute("CREATE TABLE IF NOT EXISTS messages(id INTEGER PRIMARY KEY AUTOINCREMENT,
+                                             user_id INTEGER NOT NULL,
                                              channel_id INTEGER NOT NULL,
                                              time INTEGER NOT NULL,
                                              nickname TEXT NOT NULL,
                                              content TEXT NOT NULL,
                                              FOREIGN KEY(user_id) REFERENCES users(id),
                                              FOREIGN KEY(channel_id) REFERENCES channels(id));", NO_PARAMS)?;
-    
+
     Ok(())
 }
 
@@ -66,8 +67,8 @@ pub fn verify_login(db_path: &str, username: &str, password: &str) -> Result<boo
     }
 }
 
-pub fn get_users(db_path: &str) -> Result<HashMap<String, User>, DatabaseError> {
-    let mut users: HashMap<String, User> = HashMap::new();
+pub fn get_users(db_path: &str) -> Result<MultiMap<String, i64, User>, DatabaseError> {
+    let mut users = MultiMap::new();
     let conn = Connection::open(db_path)?;
     let mut stmt = conn.prepare("SELECT id, username, nickname FROM users;")?;
     let user_iter = stmt.query_map(NO_PARAMS, |row| {
@@ -78,12 +79,12 @@ pub fn get_users(db_path: &str) -> Result<HashMap<String, User>, DatabaseError> 
     })?;
 
     for user in user_iter.filter_map(|u| u.ok()) {
-        users.insert(user.username.to_string(), user);
+        users.insert(user.username.to_string(), user.id, user);
     }
     Ok(users)
 }
 
-pub fn get_channels(db_path: &str, users: &HashMap<String, User>) -> Result<HashMap<String, Channel>, DatabaseError> {
+pub fn get_channels(db_path: &str, users: &MultiMap<String, i64, User>) -> Result<HashMap<String, Channel>, DatabaseError> {
     let mut channels: HashMap<String, Channel> = HashMap::new();
     let conn = Connection::open(db_path)?;
     let mut stmt = conn.prepare("SELECT channels.id,channels.name,users.username FROM channels
@@ -121,4 +122,20 @@ pub fn add_message(db_path: &str, user_id: i64, channel_id: i64, time: i64, nick
     let conn = Connection::open(db_path)?;
     conn.execute("INSERT INTO messages VALUES (null, ?, ?, ?, ?, ?);", params![user_id, channel_id, time, nickname, message])?;
     Ok(conn.last_insert_rowid())
+}
+
+pub type HistoryResult = (i64, i64, i64, String, String);
+pub fn get_channel_history(db_path: &str, channel_id: i64, limit: i64) -> Result<Vec<HistoryResult>, DatabaseError> {
+    let conn = Connection::open(db_path)?;
+    let mut stmt = conn.prepare("SELECT id,user_id,time,nickname,content FROM messages WHERE channel_id = ? ORDER BY time DESC LIMIT ?;")?;
+    let message_iter = stmt.query_map(params![channel_id, limit], |row| {
+        let message_id = row.get(0)?;
+        let user_id = row.get(1)?;
+        let time = row.get(2)?;
+        let nickname = row.get::<_, String>(3)?;
+        let content = row.get::<_, String>(4)?;
+        Ok((message_id, user_id, time, nickname, content))
+    })?;
+
+    Ok(message_iter.filter_map(|m| m.ok()).collect())
 }

@@ -10,6 +10,7 @@ mod db_interaction;
 mod server;
 mod user;
 mod channel;
+mod message;
 
 #[tokio::main]
 async fn main() {

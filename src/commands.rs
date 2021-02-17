@@ -1,10 +1,11 @@
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
- 
+
 use boolinator::Boolinator;
 use lazy_static::lazy_static;
 use regex::Regex;
+use std::collections::HashMap;
 use std::collections::hash_map::Entry;
 use std::net::SocketAddr;
 use std::time::SystemTime;
@@ -13,6 +14,7 @@ use serde_json::json;
 use thiserror::Error;
 use tokio::sync::mpsc::error::SendError;
 use super::channel::Channel;
+use super::message::Message;
 use super::server::ChatServer;
 use super::server::ServerCommandResponse;
 use super::user::User;
@@ -77,7 +79,7 @@ async fn handle_ident(state: &mut ChatServer, client: SocketAddr, json: &Value) 
 
     let channels: Vec<serde_json::Value> = state.channels.values()
                                               .filter(|chan| chan.users.contains(&username))
-                                              .map(|chan| chan.serialize(|u| state.users.get(u).cloned()))
+                                              .map(|chan| chan.serialize(|u| state.users.get(&u.to_owned()).cloned()))
                                               .collect();
 
     let response = json!({
@@ -120,8 +122,6 @@ async fn handle_register(state: &mut ChatServer, client: SocketAddr, json: &Valu
 }
 
 async fn handle_join(state: &mut ChatServer, client: SocketAddr, json: &Value) -> Result<(), CommandError> {
-    println!("Got join");
-
     // User must be authenticated for this command to work
     let user = {
         let u = state.get_user(&client).ok_or(CommandError::NeedAuth)?;
@@ -156,12 +156,12 @@ async fn handle_join(state: &mut ChatServer, client: SocketAddr, json: &Value) -
     });
 
     // The lookup_user closure is the same for both of these calls, but it doesn't compile if I store it in a local.
-    channel.broadcast(|username| state.users.get(username).cloned(), &json.to_string()).await;
+    channel.broadcast(|username| state.users.get(&username.to_owned()).cloned(), &json.to_string()).await;
 
     // Let this user know some information about the channel they joined.
     let json = json!({
         "cmd" : "CHANNELINFO",
-        "channel" : channel.serialize(|username| state.users.get(username).cloned())
+        "channel" : channel.serialize(|username| state.users.get(&username.to_owned()).cloned())
     });
 
     user.send_to(&client, &json.to_string()).await;
@@ -189,24 +189,61 @@ async fn handle_msg(state: &ChatServer, client: SocketAddr, json: &Value) -> Res
         "time" : time
     });
 
-    channel.broadcast(|username| state.users.get(username).cloned(), &json.to_string()).await;
+    channel.broadcast(|username| state.users.get(&username.to_owned()).cloned(), &json.to_string()).await;
+    Ok(())
+}
+
+async fn handle_history(state: &ChatServer, client: SocketAddr, json: &Value) -> Result<(), CommandError> {
+    let user = state.get_user(&client).ok_or(CommandError::NeedAuth)?;
+    let mut all_messages = HashMap::new();
+
+    // here we aren't disconnecting the user for invalid arguments... but maybe we should?
+    let channels = json["channels"].as_array()
+        .ok_or(CommandError::InvalidArguments)?.iter()
+        .filter_map(|value| value.as_str())
+        .filter_map(|str_value| state.channels.get(&str_value.to_lowercase()))
+        .filter(|channel| channel.users.contains(&user.username));
+
+    for channel in channels {
+        let tmp = db_interaction::get_channel_history(&state.db_path, channel.id, 50)?;
+        let messages: Vec<Message> = tmp.iter().filter_map(|(message_id, user_id, time, nickname, content)| {
+            if let Some(user) = state.users.get_alt(user_id) {
+                Some(Message::new(*message_id, user.clone(), *time, nickname, content))
+            }
+            else {
+                None
+            }
+        }).collect();
+
+        all_messages.insert(&channel.name, messages);
+    }
+
+    if !all_messages.is_empty() {
+        let json = json!({
+            "cmd" : "HISTORY",
+            "messages" : all_messages
+        });
+
+        user.send_to(&client, &json.to_string()).await;
+    }
     Ok(())
 }
 
 pub async fn process_command(state: &mut ChatServer, client: SocketAddr, data: &str) -> Result<(), CommandError> {
-        // Parses the JSON and extracts the incoming command name.
-        fn parse_incoming_json(data: &str) -> Result<(Value, String), CommandError> {
-            let json = serde_json::from_str::<Value>(data)?;
-            let cmd = json["cmd"].as_str().ok_or(CommandError::MissingCommand)?;
-            Ok((json.clone(), cmd.to_string()))
-        }
+    // Parses the JSON and extracts the incoming command name.
+    fn parse_incoming_json(data: &str) -> Result<(Value, String), CommandError> {
+        let json = serde_json::from_str::<Value>(data)?;
+        let cmd = json["cmd"].as_str().ok_or(CommandError::MissingCommand)?;
+        Ok((json.clone(), cmd.to_string()))
+    }
 
-        let (json, cmd) = parse_incoming_json(data)?;
-        match cmd.as_str() {
-            "MSG" => handle_msg(state, client, &json).await,
-            "IDENT" => handle_ident(state, client, &json).await,
-            "REGISTER" => handle_register(state, client, &json).await,
-            "JOIN" => handle_join(state, client, &json).await,
-            _ => Err(CommandError::MissingCommand)
-        }
+    let (json, cmd) = parse_incoming_json(data)?;
+    match cmd.as_str() {
+        "MSG" => handle_msg(state, client, &json).await,
+        "IDENT" => handle_ident(state, client, &json).await,
+        "REGISTER" => handle_register(state, client, &json).await,
+        "JOIN" => handle_join(state, client, &json).await,
+        "HISTORY" => handle_history(state, client, &json).await,
+        _ => Err(CommandError::MissingCommand)
+    }
 }

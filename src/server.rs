@@ -10,6 +10,7 @@ use super::config_parser::ServerConfig;
 use super::db_interaction;
 use super::user::{UnauthedUser, User};
 use futures_util::StreamExt;
+use multi_map::MultiMap;
 use native_tls::Identity;
 use serde_json::json;
 use std::collections::HashMap;
@@ -49,22 +50,21 @@ impl tokio_stream::Stream for WorkerStream {
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         if let Poll::Ready(Some(v)) = Pin::new(&mut self.receiver).poll_next(cx) {
             Poll::Ready(Some(v))
-        } 
+        }
         else if let Poll::Ready(_) = Pin::new(&mut self.timer).poll_tick(cx) {
             Poll::Ready(Some(Message::CheckUnauthUsers))
-        } 
+        }
         else {
             Poll::Pending
         }
     }
 }
 
-#[derive(Clone)]
 pub struct ChatServer {
     pub db_path: String,
     pub unauth_connections: HashMap<SocketAddr, UnauthedUser>,
     pub connections: HashMap<SocketAddr, String>,
-    pub users: HashMap<String, User>,
+    pub users: MultiMap<String, i64, User>,
     pub channels: HashMap<String, Channel>,
 }
 
@@ -77,8 +77,8 @@ impl ChatServer {
             db_path: db_path.to_string(),
             unauth_connections: HashMap::new(),
             connections: HashMap::new(),
-            users: users,
-            channels: channels,
+            users,
+            channels,
         }
     }
 
@@ -106,7 +106,7 @@ impl ChatServer {
         for client in self.unauth_connections.values().filter(|c| now.duration_since(c.time) > max_dur) {
             if let Err(e) = client.tx.send(ServerCommandResponse::Disconnect(CommandError::DidNotAuth)).await {
                 println!("Couldn't send error to client who didn't auth in time: {}", e);
-            } 
+            }
             else {
                 println!("Disconnecting client who didn't auth in time");
             }
@@ -127,13 +127,13 @@ impl ChatServer {
         self.connections.insert(addr, username);
     }
 
-    async fn send_user_status_update(channels: &HashMap<String, Channel>, users: &HashMap<String, User>, user: &User) {
+    async fn send_user_status_update(channels: &HashMap<String, Channel>, users: &MultiMap<String, i64, User>, user: &User) {
         for channel in channels.values().filter(|chan| chan.users.contains(&user.username)) {
             let json = json!({
                 "cmd": "STATUS",
                 "user": user,
             });
-            channel.broadcast_filter(|username| users.get(username).cloned(), |u| u != user, &json.to_string()).await;
+            channel.broadcast_filter(|username| users.get(&username.to_owned()).cloned(), |u| u != user, &json.to_string()).await;
         }
     }
 
@@ -158,7 +158,7 @@ impl ChatServer {
     }
 
     pub fn add_user(&mut self, user: User) {
-        self.users.insert(user.username.to_string(), user);
+        self.users.insert(user.username.to_string(), user.id, user);
     }
 
     pub fn get_user(&self, addr: &SocketAddr) -> Option<&User> {
@@ -175,7 +175,7 @@ async fn server_worker_impl(mut receiver: mpsc::Receiver<Message>, db_path: &str
     let mut server = ChatServer::new(db_path);
 
     // Construct a stream that receives data from either the client thread, or receives a
-    // notification from a timer to check for non-reponsive unauthenticated users.
+    // notification from a timer to check for non-responsive unauthenticated users.
     let mut worker_stream = {
         let rs = Box::pin(async_stream::stream! {
             while let Some(item) = receiver.recv().await {

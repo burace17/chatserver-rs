@@ -29,7 +29,7 @@ pub struct User {
 impl User {
     pub fn new(id: i64, username: &str, nickname: &str) -> Self {
         User{
-            id: id,
+            id,
             username: username.to_string(),
             nickname: nickname.to_string(),
             connections: HashMap::new(),
@@ -96,8 +96,8 @@ impl Serialize for User {
 
 impl std::cmp::PartialEq for User {
     fn eq(&self, other: &Self) -> bool {
-        self.id == other.id 
-     && self.username == other.username 
+        self.id == other.id
+     && self.username == other.username
      && self.nickname == other.nickname && self.status == other.status
     }
 }
