@@ -9,8 +9,8 @@ use std::collections::HashMap;
 use std::collections::hash_map::Entry;
 use std::net::SocketAddr;
 use std::time::SystemTime;
-use serde_json::Value;
-use serde_json::json;
+use serde_json::{Value, json};
+use serde::Serialize;
 use thiserror::Error;
 use tokio::sync::mpsc::error::SendError;
 use super::channel::Channel;
@@ -67,10 +67,10 @@ async fn handle_ident(state: &mut ChatServer, client: SocketAddr, json: &Value) 
     let login_succeeded = db_interaction::verify_login(&state.db_path, &username, &password)?;
     login_succeeded.ok_or(CommandError::LoginFailed)?;
 
-    let nickname = state.users.get(&username)
-                              .ok_or(CommandError::InvalidUsername)? // wouldn't expect this to fail.
-                              .nickname
-                              .to_string();
+    let (nickname, channels_being_viewed) = {
+        let user = state.users.get(&username).ok_or(CommandError::InvalidUsername)?;
+        (user.nickname.to_string(), user.get_viewed_channels())
+    };
 
     let info = state.get_unauthed_connection(client).ok_or(CommandError::InvalidArguments)?;
 
@@ -87,6 +87,7 @@ async fn handle_ident(state: &mut ChatServer, client: SocketAddr, json: &Value) 
         "name" : "test",
         "channels" : channels,
         "nickname" : nickname,
+        "viewing" : channels_being_viewed
     });
 
     info.tx.send(ServerCommandResponse::Text(response.to_string())).await?;
@@ -115,6 +116,7 @@ async fn handle_register(state: &mut ChatServer, client: SocketAddr, json: &Valu
         "name" : "test",
         "channels" : [],
         "nickname" : username,
+        "viewing" : []
     });
 
     info.tx.send(ServerCommandResponse::Text(response.to_string())).await?;
@@ -204,9 +206,15 @@ async fn handle_history(state: &ChatServer, client: SocketAddr, json: &Value) ->
         .filter_map(|str_value| state.channels.get(&str_value.to_lowercase()))
         .filter(|channel| channel.users.contains(&user.username));
 
+    #[derive(Serialize)]
+    struct HistoryValue {
+        messages: Vec<Message>,
+        last_read_message: Option<i64>
+    };
+
     for channel in channels {
-        let tmp = db_interaction::get_channel_history(&state.db_path, channel.id, 50)?;
-        let messages: Vec<Message> = tmp.iter().filter_map(|(message_id, user_id, time, nickname, content)| {
+        let history = db_interaction::get_channel_history(&state.db_path, channel.id, 50)?;
+        let messages: Vec<Message> = history.iter().filter_map(|(message_id, user_id, time, nickname, content)| {
             if let Some(user) = state.users.get_alt(user_id) {
                 Some(Message::new(*message_id, user.clone(), *time, nickname, content))
             }
@@ -215,7 +223,11 @@ async fn handle_history(state: &ChatServer, client: SocketAddr, json: &Value) ->
             }
         }).collect();
 
-        all_messages.insert(&channel.name, messages);
+        let value = HistoryValue {
+            messages,
+            last_read_message: db_interaction::get_last_message_read(&state.db_path, user.id, channel.id)?
+        };
+        all_messages.insert(&channel.name, value);
     }
 
     if !all_messages.is_empty() {
@@ -226,6 +238,45 @@ async fn handle_history(state: &ChatServer, client: SocketAddr, json: &Value) ->
 
         user.send_to(&client, &json.to_string()).await;
     }
+    Ok(())
+}
+
+async fn handle_viewing(state: &mut ChatServer, client: SocketAddr, json: &Value) -> Result<(), CommandError> {
+    let new_channel_name = json["channel"].as_str().ok_or(CommandError::InvalidArguments)?.to_lowercase();
+    let new_channel_id = {
+        let user = state.get_user(&client).ok_or(CommandError::NeedAuth)?;
+        let new_channel = state.channels.get(&new_channel_name).ok_or(CommandError::InvalidArguments)?;
+        new_channel.users.contains(&user.username).ok_or(CommandError::NotInChannel)?;
+        new_channel.id
+    };
+
+    let (user_id, no_viewers) = {
+        let user = state.get_user_mut(&client).ok_or(CommandError::NeedAuth)?;
+        user.set_viewing(&new_channel_name, &client, true);
+        let no_viewers = user.get_and_clear_no_viewers();
+        (user.id, no_viewers)
+    };
+
+    db_interaction::clear_last_message_read(&state.db_path, user_id, new_channel_id)?;
+    let user = state.get_user(&client).ok_or(CommandError::NeedAuth)?;
+    state.send_no_viewer_notifications(&no_viewers, &user).await?;
+
+    let json = json!({
+        "cmd": "HASVIEWERS",
+        "channel": new_channel_name
+    });
+    user.send_to_all(&json.to_string()).await;
+    Ok(())
+}
+
+async fn handle_not_viewing(state: &mut ChatServer, client: SocketAddr, _json: &Value) -> Result<(), CommandError> {
+    let (no_viewers, user) = {
+        let user = state.get_user_mut(&client).ok_or(CommandError::NeedAuth)?;
+        user.clear_viewing(&client);
+        (user.get_and_clear_no_viewers(), user.clone())
+    };
+
+    state.send_no_viewer_notifications(&no_viewers, &user).await?;
     Ok(())
 }
 
@@ -244,6 +295,8 @@ pub async fn process_command(state: &mut ChatServer, client: SocketAddr, data: &
         "REGISTER" => handle_register(state, client, &json).await,
         "JOIN" => handle_join(state, client, &json).await,
         "HISTORY" => handle_history(state, client, &json).await,
+        "VIEWING" => handle_viewing(state, client, &json).await,
+        "NOTVIEWING" => handle_not_viewing(state, client, &json).await,
         _ => Err(CommandError::MissingCommand)
     }
 }

@@ -142,14 +142,25 @@ impl ChatServer {
         if self.connections.contains_key(&addr) {
             let username = &self.connections[&addr];
             let mut status_changed = false;
+            let mut no_viewers: Option<Vec<String>> = None;
             if let Some(user) = self.users.get_mut(username) {
                 status_changed = user.remove_connection(&addr);
+                user.clear_viewing(&addr);
+                no_viewers = Some(user.get_and_clear_no_viewers());
             }
 
             // Hopefully in a future version of Rust this can be expressed in one if block.
             if status_changed {
                 if let Some(user) = self.users.get(username) {
                     Self::send_user_status_update(&self.channels, &self.users, &user).await;
+                }
+            }
+
+            if let Some(no_viewer_channels) = no_viewers {
+                if let Some(user) = self.users.get(username) {
+                    if let Err(e) = self.send_no_viewer_notifications(&no_viewer_channels, &user).await {
+                        println!("remove_connection(): failed to send no viewer notification: {}", e);
+                    }
                 }
             }
 
@@ -168,6 +179,27 @@ impl ChatServer {
         else {
             None
         }
+    }
+    pub fn get_user_mut(&mut self, addr: &SocketAddr) -> Option<&mut User> {
+        if let Some(username) = self.connections.get(addr) {
+            self.users.get_mut(username)
+        }
+        else {
+            None
+        }
+    }
+
+    pub async fn send_no_viewer_notifications(&self, channels: &Vec<String>, user: &User) -> Result<(), db_interaction::DatabaseError> {
+        for channel in channels.iter().filter_map(|name| self.channels.get(name.as_str())) {
+            let msg_id = db_interaction::set_last_message_read(&self.db_path, user.id, channel.id)?;
+            let json = json!({
+                "cmd": "NOVIEWERS",
+                "channel": channel.name,
+                "message_id": msg_id
+            });
+            user.send_to_all(&json.to_string()).await;
+        }
+        Ok(())
     }
 }
 
