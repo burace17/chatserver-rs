@@ -26,24 +26,26 @@ pub enum CommandError {
     MissingCommand,
     #[error("Invalid JSON")]
     InvalidJSON(#[from] serde_json::Error),
-    #[error("Invalid arguments")]
+    #[error("Invalid command arguments")]
     InvalidArguments,
-    #[error("Invalid username")]
+    #[error("Invalid username or password")]
     InvalidUsername,
-    #[error("Could not send command response")]
+    #[error("Internal server error")]
     SendFailed(Box<SendError<ServerCommandResponse>>),
-    #[error("Could not login (dbms error)")]
+    #[error("Internal server error")]
     LoginDBMSError(#[from] db_interaction::DatabaseError),
-    #[error("Could not login")]
+    #[error("Invalid username or password")]
     LoginFailed,
-    #[error("Need to authenticate first")]
+    #[error("Need to login to use this command")]
     NeedAuth,
-    #[error("Not in specified channel")]
+    #[error("Need to be in a channel to use this command")]
     NotInChannel,
-    #[error("Bad time")]
+    #[error("Internal server error")]
     TimeError(#[from] std::time::SystemTimeError),
-    #[error("Didn't auth in time")]
-    DidNotAuth
+    #[error("Did not authenticate in time")]
+    DidNotAuth,
+    #[error("User is already registered")]
+    AlreadyRegistered
 }
 
 impl std::convert::From<SendError<ServerCommandResponse>> for CommandError {
@@ -100,6 +102,9 @@ async fn handle_register(state: &mut ChatServer, client: SocketAddr, json: &Valu
 
     // check username for invalid characters
     USERNAME_PATTERN.is_match(&username).ok_or(CommandError::InvalidUsername)?;
+
+    // check if already registered
+    state.users.get(&username).is_none().ok_or(CommandError::AlreadyRegistered)?;
 
     let user_id = db_interaction::register_user(&state.db_path, &username, &password)?;
     let info = state.get_unauthed_connection(client).ok_or(CommandError::InvalidArguments)?;

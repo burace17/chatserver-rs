@@ -1,7 +1,7 @@
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
- 
+
 use futures_util::{StreamExt, SinkExt};
 use std::net::SocketAddr;
 use std::pin::Pin;
@@ -54,20 +54,23 @@ fn error_to_close_frame<'a>(error: CommandError) -> CloseFrame<'a> {
     fn to_code(code: u16) -> CloseCode {
         CloseCode::Library(code)
     }
+    let reason = std::borrow::Cow::from(error.to_string());
+    let code = match error {
+        CommandError::MissingCommand => to_code(4000),
+        CommandError::InvalidJSON(_) => to_code(4001),
+        CommandError::InvalidArguments => to_code(4002),
+        CommandError::InvalidUsername => to_code(4003),
+        CommandError::SendFailed(_) => to_code(4004),
+        CommandError::LoginDBMSError(_) => to_code(4005),
+        CommandError::LoginFailed => to_code(4006),
+        CommandError::NeedAuth => to_code(4007),
+        CommandError::NotInChannel => to_code(4008),
+        CommandError::TimeError(_) => to_code(4009),
+        CommandError::DidNotAuth => to_code(4010),
+        CommandError::AlreadyRegistered => to_code(4011),
+    };
 
-    match error {
-        CommandError::MissingCommand => CloseFrame{ code: to_code(4000), reason: "Unknown command".into() },
-        CommandError::InvalidJSON(_) => CloseFrame{ code: to_code(4001), reason: "Invalid JSON".into() },
-        CommandError::InvalidArguments => CloseFrame{ code: to_code(4002), reason: "Invalid command arguments".into() },
-        CommandError::InvalidUsername => CloseFrame{ code: to_code(4003), reason: "Invalid username or password".into() },
-        CommandError::SendFailed(_) => CloseFrame{ code: to_code(4004), reason: "Internal server error".into() },
-        CommandError::LoginDBMSError(_) => CloseFrame{ code: to_code(4005), reason: "Internal server error".into() },
-        CommandError::LoginFailed => CloseFrame{ code: to_code(4006), reason: "Invalid username or password".into() },
-        CommandError::NeedAuth => CloseFrame{ code: to_code(4007), reason: "Need to login to use this command".into() },
-        CommandError::NotInChannel => CloseFrame{ code: to_code(4008), reason: "Need to be in a channel to use this command".into() },
-        CommandError::TimeError(_) => CloseFrame{ code: to_code(4009), reason: "Internal server error".into() },
-        CommandError::DidNotAuth => CloseFrame{ code: to_code(4010), reason: "Did not authenticate in time".into() },
-    }
+    CloseFrame{ code, reason }
 }
 
 fn get_normal_close_frame<'a>() -> CloseFrame<'a> {
@@ -103,9 +106,9 @@ pub async fn process_client(addr: SocketAddr, websocket: WebSocketStream, tx: mp
             ClientStreamMessage::ManagerData(response) => {
                 match response {
                     ServerCommandResponse::Text(msg) => ws_tx.send(tungstenite::Message::Text(msg)).await?,
-                    ServerCommandResponse::Disconnect(e) => { 
-                        ws_tx.send(tungstenite::Message::Close(Some(error_to_close_frame(e)))).await?; 
-                        break; 
+                    ServerCommandResponse::Disconnect(e) => {
+                        ws_tx.send(tungstenite::Message::Close(Some(error_to_close_frame(e)))).await?;
+                        break;
                     }
                 }
             }
