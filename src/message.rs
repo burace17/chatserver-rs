@@ -5,13 +5,14 @@
 use super::user::User;
 use serde::Serialize;
 
-#[derive(Serialize)]
+#[derive(Serialize, Clone)]
 pub struct Message {
     message_id: i64,
     user: User,
     time: i64,
     nickname: String,
-    content: String
+    content: String,
+    pub attachments: Vec<MessageAttachment>
 }
 
 impl Message {
@@ -21,7 +22,20 @@ impl Message {
             user,
             time,
             nickname: nickname.to_string(),
-            content: content.to_string()
+            content: content.to_string(),
+            attachments: Vec::new()
         }
+    }
+}
+
+#[derive(Serialize, Clone)]
+pub struct MessageAttachment {
+    url: String,
+    mime: String
+}
+
+impl MessageAttachment {
+    pub fn new(url: &str, mime: &str) -> Self {
+        MessageAttachment{ url: url.to_string(), mime: mime.to_string() }
     }
 }

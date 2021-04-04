@@ -8,6 +8,7 @@ use sodiumoxide::crypto::pwhash::argon2i13::{pwhash, pwhash_verify, HashedPasswo
 use std::collections::HashMap;
 use super::user::User;
 use super::channel::Channel;
+use super::message::{Message, MessageAttachment};
 use thiserror::Error;
 use rusqlite::config::DbConfig;
 
@@ -55,6 +56,11 @@ pub fn setup_database(db_path: &str) -> Result<()> {
                                              UNIQUE(user_id, channel_id, message_id),
                                              FOREIGN KEY(message_id) REFERENCES messages(id) ON DELETE CASCADE,
                                              FOREIGN KEY(user_id, channel_id) REFERENCES user_channels(user_id, channel_id) ON DELETE CASCADE);", NO_PARAMS)?;
+    conn.execute("CREATE TABLE IF NOT EXISTS message_attachments(id INTEGER PRIMARY KEY AUTOINCREMENT,
+                                             message_id INTEGER NOT NULL,
+                                             url TEXT NOT NULL,
+                                             mime TEXT NOT NULL,
+                                             FOREIGN KEY(message_id) REFERENCES messages(id) ON DELETE CASCADE);", NO_PARAMS)?;
     Ok(())
 }
 
@@ -138,20 +144,36 @@ pub fn add_message(db_path: &str, user_id: i64, channel_id: i64, time: i64, nick
     Ok(conn.last_insert_rowid())
 }
 
-pub type HistoryResult = (i64, i64, i64, String, String);
-pub fn get_channel_history(db_path: &str, channel_id: i64, limit: i64) -> Result<Vec<HistoryResult>, DatabaseError> {
+pub fn get_channel_history(db_path: &str, channel_id: i64, limit: i64, users: &MultiMap<String, i64, User>) -> Result<Vec<Message>, DatabaseError> {
     let conn = open(db_path)?;
-    let mut stmt = conn.prepare("SELECT id,user_id,time,nickname,content FROM messages WHERE channel_id = ? ORDER BY time DESC LIMIT ?;")?;
+    let mut stmt = conn.prepare("SELECT messages.id,messages.user_id,messages.time,messages.nickname,messages.content,message_attachments.url,message_attachments.mime
+        FROM messages LEFT JOIN message_attachments ON messages.id = message_attachments.message_id WHERE channel_id = ? ORDER BY time DESC LIMIT ?;")?;
     let message_iter = stmt.query_map(params![channel_id, limit], |row| {
         let message_id = row.get(0)?;
         let user_id = row.get(1)?;
         let time = row.get(2)?;
         let nickname = row.get::<_, String>(3)?;
         let content = row.get::<_, String>(4)?;
-        Ok((message_id, user_id, time, nickname, content))
+        let url = row.get::<_, Option<String>>(5)?;
+        let mime = row.get::<_, Option<String>>(6)?;
+        Ok((message_id, user_id, time, nickname, content, url, mime))
     })?;
 
-    Ok(message_iter.filter_map(|m| m.ok()).collect())
+    let mut messages: HashMap<i64, Message> = HashMap::new();
+    for (message_id, user_id, time, nickname, content, url, mime) in message_iter.filter_map(|m| m.ok()) {
+        if let Some(user) = users.get_alt(&user_id) {
+            let message = messages.entry(message_id).or_insert_with(|| {
+                Message::new(message_id, user.clone(), time, &nickname, &content)
+            });
+
+            if url.is_some() && mime.is_some() {
+                message.attachments.push(MessageAttachment::new(&url.unwrap(), &mime.unwrap()));
+            }
+        }
+    }
+
+    // TODO: use into_values() once stable
+    Ok(messages.values().map(|m| m.clone()).collect())
 }
 
 pub fn get_last_message_read(db_path: &str, user_id: i64, channel_id: i64) -> Result<Option<i64>, DatabaseError> {
@@ -173,13 +195,6 @@ pub fn set_last_message_read(db_path: &str, user_id: i64, channel_id: i64) -> Re
         Err(e) => Err(DatabaseError::DBMSError(e))
     }?;
 
-    if let Some(id) = message_id {
-        println!("set_last_message_read: {}", id);
-    }
-    else {
-        println!("set_last_message_read: None");
-    }
-
     conn.execute("REPLACE INTO user_last_read_messages VALUES (?, ?, ?);", params![user_id, channel_id, message_id])?;
     Ok(message_id)
 }
@@ -187,5 +202,11 @@ pub fn set_last_message_read(db_path: &str, user_id: i64, channel_id: i64) -> Re
 pub fn clear_last_message_read(db_path: &str, user_id: i64, channel_id: i64) -> Result<(), DatabaseError> {
     let conn = open(db_path)?;
     conn.execute("DELETE FROM user_last_read_messages WHERE user_id = ? AND channel_id = ?;", params![user_id, channel_id])?;
+    Ok(())
+}
+
+pub fn add_message_attachment(db_path: &str, message_id: i64, url: &str, mime: &str) -> Result<(), DatabaseError> {
+    let conn = open(db_path)?;
+    conn.execute("INSERT INTO message_attachments VALUES (null, ?, ?, ?);", params![message_id, url, mime]).unwrap();
     Ok(())
 }

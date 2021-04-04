@@ -9,6 +9,7 @@ use super::commands::CommandError;
 use super::config_parser::ServerConfig;
 use super::db_interaction;
 use super::user::{UnauthedUser, User};
+use super::attachments::AttachmentInfo;
 use futures_util::StreamExt;
 use multi_map::MultiMap;
 use native_tls::Identity;
@@ -22,9 +23,11 @@ use std::time::Instant;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::mpsc;
 use tokio_native_tls::{TlsAcceptor, TlsStream};
+use crate::attachments::start_attachment_manager;
 
 pub type WebSocketStream = tokio_tungstenite::WebSocketStream<TlsStream<TcpStream>>;
 pub type Sender = mpsc::Sender<ServerCommandResponse>;
+type PinnedStream<T> = Pin<Box<dyn tokio_stream::Stream<Item = T> + Send>>;
 
 #[derive(Debug)]
 pub enum Message {
@@ -32,6 +35,7 @@ pub enum Message {
     NewData((SocketAddr, String)),
     Disconnected(SocketAddr),
     CheckUnauthUsers,
+    GotAttachment(AttachmentInfo)
 }
 
 #[derive(Debug)]
@@ -41,8 +45,9 @@ pub enum ServerCommandResponse {
 }
 
 struct WorkerStream {
-    receiver: Pin<Box<dyn tokio_stream::Stream<Item = Message> + Send>>,
+    receiver: PinnedStream<Message>,
     timer: tokio::time::Interval,
+    attachment_receiver: PinnedStream<Message>
 }
 
 impl tokio_stream::Stream for WorkerStream {
@@ -53,6 +58,9 @@ impl tokio_stream::Stream for WorkerStream {
         }
         else if let Poll::Ready(_) = Pin::new(&mut self.timer).poll_tick(cx) {
             Poll::Ready(Some(Message::CheckUnauthUsers))
+        }
+        else if let Poll::Ready(Some(v)) = Pin::new(&mut self.attachment_receiver).poll_next(cx) {
+            Poll::Ready(Some(v))
         }
         else {
             Poll::Pending
@@ -66,10 +74,11 @@ pub struct ChatServer {
     pub connections: HashMap<SocketAddr, String>,
     pub users: MultiMap<String, i64, User>,
     pub channels: HashMap<String, Channel>,
+    url_sender: mpsc::Sender<AttachmentInfo>
 }
 
 impl ChatServer {
-    fn new(db_path: &str) -> Self {
+    fn new(db_path: &str, url_sender: mpsc::Sender<AttachmentInfo>) -> Self {
         let users = db_interaction::get_users(db_path).unwrap();
         let channels = db_interaction::get_channels(db_path, &users).unwrap();
 
@@ -79,6 +88,7 @@ impl ChatServer {
             connections: HashMap::new(),
             users,
             channels,
+            url_sender
         }
     }
 
@@ -201,23 +211,53 @@ impl ChatServer {
         }
         Ok(())
     }
+
+    async fn add_attachment_to_message(&self, info: &AttachmentInfo) -> Result<(), db_interaction::DatabaseError> {
+        db_interaction::add_message_attachment(&self.db_path, info.message_id, &info.url, &info.mime)?;
+        if let Some(channel) = self.channels.values().find(|c| c.id == info.channel_id) {
+            let json = json!({
+                "cmd" : "ADDATTACHMENT",
+                "channel" : channel.name,
+                "message_id" : info.message_id,
+                "url" : info.url,
+                "mime" : info.mime
+            });
+
+            channel.broadcast(|username| self.users.get(&username.to_owned()).cloned(), &json.to_string()).await;
+        }
+        Ok(())
+    }
+
+    pub async fn query_for_attachments(&self, channel_id: i64, message_id: i64, url: &str) -> Result<(), mpsc::error::SendError<AttachmentInfo>> {
+        let info = AttachmentInfo::new(channel_id, message_id, url);
+        self.url_sender.send(info).await?;
+        Ok(())
+    }
 }
 
 async fn server_worker_impl(mut receiver: mpsc::Receiver<Message>, db_path: &str) {
-    let mut server = ChatServer::new(db_path);
+    let (mut attachment_receiver, url_sender) = start_attachment_manager();
+    let mut server = ChatServer::new(db_path, url_sender);
 
-    // Construct a stream that receives data from either the client thread, or receives a
-    // notification from a timer to check for non-responsive unauthenticated users.
+    // Construct a stream that receives data from either the client thread, or a
+    // notification from the timer to check for non-responsive unauthenticated users,
+    // or an attachment from the attachment manager task.
     let mut worker_stream = {
-        let rs = Box::pin(async_stream::stream! {
+        let receiver_pin = Box::pin(async_stream::stream! {
             while let Some(item) = receiver.recv().await {
+                yield item;
+            }
+        });
+        let attachment_receiver_pin = Box::pin(async_stream::stream! {
+            while let Some(item) = attachment_receiver.recv().await {
                 yield item;
             }
         });
 
         WorkerStream {
-            receiver: rs,
+            receiver: receiver_pin,
             timer: tokio::time::interval(std::time::Duration::from_secs(30)),
+            attachment_receiver: attachment_receiver_pin,
         }
     };
 
@@ -247,6 +287,11 @@ async fn server_worker_impl(mut receiver: mpsc::Receiver<Message>, db_path: &str
             }
             Message::CheckUnauthUsers => {
                 server.disconnect_unauth_users().await;
+            }
+            Message::GotAttachment(media_info) => {
+                if let Err(e) = server.add_attachment_to_message(&media_info).await {
+                    println!("Failed to send ADDATTACHMENT command: {}", e);
+                }
             }
         }
     }

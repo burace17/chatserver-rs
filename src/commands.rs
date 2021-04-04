@@ -4,6 +4,7 @@
 
 use boolinator::Boolinator;
 use lazy_static::lazy_static;
+use linkify::LinkFinder;
 use regex::Regex;
 use std::collections::HashMap;
 use std::collections::hash_map::Entry;
@@ -197,6 +198,19 @@ async fn handle_msg(state: &ChatServer, client: SocketAddr, json: &Value) -> Res
     });
 
     channel.broadcast(|username| state.users.get(&username.to_owned()).cloned(), &json.to_string()).await;
+
+    let links: Vec<String> = {
+        let mut link_finder = LinkFinder::new();
+        let links = link_finder.kinds(&[linkify::LinkKind::Url]).links(msg_text);
+        links.map(|link| link.as_str().to_string()).collect()
+    };
+
+    for link in links {
+        if let Err(e) = state.query_for_attachments(channel.id, msg_id, &link).await {
+            println!("Could not send link to attachment manager task: {}", e);
+        }
+    }
+
     Ok(())
 }
 
@@ -215,19 +229,10 @@ async fn handle_history(state: &ChatServer, client: SocketAddr, json: &Value) ->
     struct HistoryValue {
         messages: Vec<Message>,
         last_read_message: Option<i64>
-    };
+    }
 
     for channel in channels {
-        let history = db_interaction::get_channel_history(&state.db_path, channel.id, 50)?;
-        let messages: Vec<Message> = history.iter().filter_map(|(message_id, user_id, time, nickname, content)| {
-            if let Some(user) = state.users.get_alt(user_id) {
-                Some(Message::new(*message_id, user.clone(), *time, nickname, content))
-            }
-            else {
-                None
-            }
-        }).collect();
-
+        let messages = db_interaction::get_channel_history(&state.db_path, channel.id, 50, &state.users)?;
         let value = HistoryValue {
             messages,
             last_read_message: db_interaction::get_last_message_read(&state.db_path, user.id, channel.id)?
