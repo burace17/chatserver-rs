@@ -9,24 +9,23 @@ edition = "2018"
 [dependencies]
 reqwest = { version = "0.11" }
 tokio = { version = "1", features = ["full"] }
-tokio-tungstenite = "0.13.0"
-tokio-native-tls = "0.3.0"
-tokio-stream = "0.1.2"
-native-tls = "0.2.7"
+tokio-tungstenite = "0.13"
+tokio-native-tls = "0.3"
+tokio-stream = "0.1"
+native-tls = "0.2"
 serde = { version = "1.0", features = ["derive"]}
-serde_json = "1.0.61"
+serde_json = "1.0"
 thiserror = "1.0"
-futures-util = "0.3.9"
-async-stream = "0.3.0"
-tungstenite = "0.12.0"
-lazy_static = "1.4.0"
-regex = "1.4.3"
-boolinator = "2.4.0"
-sodiumoxide = "0.2.6"
-multi-map = "1.3.0"
+futures-util = "0.3"
+async-stream = "0.3"
+tungstenite = "0.12"
+lazy_static = "1.4"
+regex = "1.4"
+boolinator = "2.4"
+sodiumoxide = "0.2"
+multi-map = "1.3"
 anyhow = "1.0"
-linkify = "0.5.0"
-
-[dependencies.rusqlite]
-version = "0.24.2"
-features = ["bundled"]
+linkify = "0.5"
+async-trait = "0.1"
+sqlx = { version = "0.5", features = [ "runtime-tokio-rustls", "sqlite" ] }
+futures = "0.3"

@@ -6,12 +6,12 @@ use std::env;
 mod client_connection;
 mod commands;
 mod config_parser;
-mod db_interaction;
 mod server;
 mod user;
 mod channel;
 mod message;
 mod attachments;
+mod db;
 
 #[tokio::main]
 async fn main() {

@@ -3,5 +3,5 @@
 	"cert_password" : "mypassword",
 	"bind_ip" : "0.0.0.0",
 	"bind_port" : 1337,
-	"db_path" : "db.sqlite"
+	"db_path" : "sqlite:./db.sqlite"
 }

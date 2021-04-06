@@ -7,7 +7,8 @@ use super::client_connection;
 use super::commands;
 use super::commands::CommandError;
 use super::config_parser::ServerConfig;
-use super::db_interaction;
+use super::db::{DatabaseError, ChatDatabase};
+use super::db::sqlite::SqliteChatDatabase;
 use super::user::{UnauthedUser, User};
 use super::attachments::AttachmentInfo;
 use futures_util::StreamExt;
@@ -69,7 +70,7 @@ impl tokio_stream::Stream for WorkerStream {
 }
 
 pub struct ChatServer {
-    pub db_path: String,
+    pub db: Box<dyn ChatDatabase>,
     pub unauth_connections: HashMap<SocketAddr, UnauthedUser>,
     pub connections: HashMap<SocketAddr, String>,
     pub users: MultiMap<String, i64, User>,
@@ -78,12 +79,18 @@ pub struct ChatServer {
 }
 
 impl ChatServer {
-    fn new(db_path: &str, url_sender: mpsc::Sender<AttachmentInfo>) -> Self {
-        let users = db_interaction::get_users(db_path).unwrap();
-        let channels = db_interaction::get_channels(db_path, &users).unwrap();
+    async fn new(db_path: &str, url_sender: mpsc::Sender<AttachmentInfo>) -> Self {
+        // In the future we will of course want to generalize this so it doesn't just make a sqlite pool.
+        let pool = sqlx::SqlitePool::connect(db_path).await.unwrap();
+        let db = SqliteChatDatabase::new(pool);
+
+        // These cannot fail.
+        db.setup_database().await.unwrap();
+        let users = db.get_users().await.unwrap();
+        let channels = db.get_channels(&users).await.unwrap();
 
         ChatServer {
-            db_path: db_path.to_string(),
+            db: Box::new(db),
             unauth_connections: HashMap::new(),
             connections: HashMap::new(),
             users,
@@ -199,9 +206,9 @@ impl ChatServer {
         }
     }
 
-    pub async fn send_no_viewer_notifications(&self, channels: &Vec<String>, user: &User) -> Result<(), db_interaction::DatabaseError> {
+    pub async fn send_no_viewer_notifications(&self, channels: &Vec<String>, user: &User) -> Result<(), DatabaseError> {
         for channel in channels.iter().filter_map(|name| self.channels.get(name.as_str())) {
-            let msg_id = db_interaction::set_last_message_read(&self.db_path, user.id, channel.id)?;
+            let msg_id = self.db.set_last_message_read(user.id, channel.id).await?;
             let json = json!({
                 "cmd": "NOVIEWERS",
                 "channel": channel.name,
@@ -212,8 +219,8 @@ impl ChatServer {
         Ok(())
     }
 
-    async fn add_attachment_to_message(&self, info: &AttachmentInfo) -> Result<(), db_interaction::DatabaseError> {
-        db_interaction::add_message_attachment(&self.db_path, info.message_id, &info.url, &info.mime)?;
+    async fn add_attachment_to_message(&self, info: &AttachmentInfo) -> Result<(), DatabaseError> {
+        self.db.add_message_attachment(info.message_id, &info.url, &info.mime).await?;
         if let Some(channel) = self.channels.values().find(|c| c.id == info.channel_id) {
             let json = json!({
                 "cmd" : "ADDATTACHMENT",
@@ -237,7 +244,7 @@ impl ChatServer {
 
 async fn server_worker_impl(mut receiver: mpsc::Receiver<Message>, db_path: &str) {
     let (mut attachment_receiver, url_sender) = start_attachment_manager();
-    let mut server = ChatServer::new(db_path, url_sender);
+    let mut server = ChatServer::new(db_path, url_sender).await;
 
     // Construct a stream that receives data from either the client thread, or a
     // notification from the timer to check for non-responsive unauthenticated users,
@@ -306,8 +313,6 @@ pub async fn start_server(config: &ServerConfig) {
         let a = TlsAcceptor::from(native_tls::TlsAcceptor::builder(pkcs12).build().unwrap());
         Arc::new(a)
     };
-
-    db_interaction::setup_database(&config.db_path).unwrap();
 
     let listener = TcpListener::bind(format!("{}:{}", &config.bind_ip, &config.port)).await.unwrap();
     let (sender, receiver) = mpsc::channel::<Message>(32); // TODO: What should this be?

@@ -19,7 +19,7 @@ use super::message::Message;
 use super::server::ChatServer;
 use super::server::ServerCommandResponse;
 use super::user::User;
-use super::db_interaction;
+use super::db;
 
 #[derive(Error, Debug)]
 pub enum CommandError {
@@ -34,7 +34,7 @@ pub enum CommandError {
     #[error("Internal server error")]
     SendFailed(Box<SendError<ServerCommandResponse>>),
     #[error("Internal server error")]
-    LoginDBMSError(#[from] db_interaction::DatabaseError),
+    LoginDBMSError(#[from] db::DatabaseError),
     #[error("Invalid username or password")]
     LoginFailed,
     #[error("Need to login to use this command")]
@@ -67,7 +67,7 @@ async fn handle_ident(state: &mut ChatServer, client: SocketAddr, json: &Value) 
     USERNAME_PATTERN.is_match(&username).ok_or(CommandError::InvalidUsername)?;
 
     // check password
-    let login_succeeded = db_interaction::verify_login(&state.db_path, &username, &password)?;
+    let login_succeeded = state.db.verify_login(&username, &password).await?;
     login_succeeded.ok_or(CommandError::LoginFailed)?;
 
     let (nickname, channels_being_viewed) = {
@@ -107,7 +107,7 @@ async fn handle_register(state: &mut ChatServer, client: SocketAddr, json: &Valu
     // check if already registered
     state.users.get(&username).is_none().ok_or(CommandError::AlreadyRegistered)?;
 
-    let user_id = db_interaction::register_user(&state.db_path, &username, &password)?;
+    let user_id = state.db.register_user(&username, &password).await?;
     let info = state.get_unauthed_connection(client).ok_or(CommandError::InvalidArguments)?;
 
     state.remove_unauth_connection(client);
@@ -144,12 +144,12 @@ async fn handle_join(state: &mut ChatServer, client: SocketAddr, json: &Value) -
         let channel = match state.channels.entry(channel_name.to_string()) {
             Entry::Occupied(o) => o.into_mut(),
             Entry::Vacant(v) => {
-                let channel_id = db_interaction::make_channel(&state.db_path, &channel_name)?;
+                let channel_id = state.db.make_channel(&channel_name).await?;
                 v.insert(Channel::new(channel_id, &channel_name))
             }
         };
 
-        db_interaction::join_channel(&state.db_path, user.id, channel.id)?;
+        state.db.join_channel(user.id, channel.id).await?;
         channel.add_user(&user);
     }
 
@@ -186,7 +186,7 @@ async fn handle_msg(state: &ChatServer, client: SocketAddr, json: &Value) -> Res
     (msg_text.len() > 0).ok_or(CommandError::InvalidArguments)?;
 
     let time = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH)?.as_secs() as i64;
-    let msg_id = db_interaction::add_message(&state.db_path, user.id, channel.id, time, &user.nickname, &msg_text)?;
+    let msg_id = state.db.add_message(user.id, channel.id, time, &user.nickname, &msg_text).await?;
 
     let json = json!({
         "cmd" : "MSG",
@@ -232,10 +232,10 @@ async fn handle_history(state: &ChatServer, client: SocketAddr, json: &Value) ->
     }
 
     for channel in channels {
-        let messages = db_interaction::get_channel_history(&state.db_path, channel.id, 50, &state.users)?;
+        let messages = state.db.get_channel_history(channel.id, 50, &state.users).await?;
         let value = HistoryValue {
             messages,
-            last_read_message: db_interaction::get_last_message_read(&state.db_path, user.id, channel.id)?
+            last_read_message: state.db.get_last_message_read(user.id, channel.id).await?
         };
         all_messages.insert(&channel.name, value);
     }
@@ -267,7 +267,7 @@ async fn handle_viewing(state: &mut ChatServer, client: SocketAddr, json: &Value
         (user.id, no_viewers)
     };
 
-    db_interaction::clear_last_message_read(&state.db_path, user_id, new_channel_id)?;
+    state.db.clear_last_message_read(user_id, new_channel_id).await?;
     let user = state.get_user(&client).ok_or(CommandError::NeedAuth)?;
     state.send_no_viewer_notifications(&no_viewers, &user).await?;
 
