@@ -7,22 +7,25 @@ use std::net::SocketAddr;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 use std::error::Error;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, watch};
 use tungstenite::protocol::CloseFrame;
 use tungstenite::protocol::frame::coding::CloseCode;
 use super::server::{WebSocketStream, Message, ServerCommandResponse};
 use super::commands::CommandError;
+use tokio_stream::wrappers::WatchStream;
 
 struct ClientStream {
     manager_rx: Pin<Box<dyn tokio_stream::Stream<Item = ServerCommandResponse> + Send>>,
-    ws_rx: futures_util::stream::SplitStream<WebSocketStream>
+    ws_rx: futures_util::stream::SplitStream<WebSocketStream>,
+    shutdown_rx: WatchStream<bool>
 }
 
 enum ClientStreamMessage {
     WebSocketText(String),
     WebSocketPing(Vec<u8>),
     WebSocketClose,
-    ManagerData(ServerCommandResponse)
+    ManagerData(ServerCommandResponse),
+    ShutdownStatus(bool)
 }
 
 impl tokio_stream::Stream for ClientStream {
@@ -43,6 +46,9 @@ impl tokio_stream::Stream for ClientStream {
                 },
                 Err(_) => Poll::Ready(None)
             }
+        }
+        else if let Poll::Ready(Some(shutdown)) = Pin::new(&mut self.shutdown_rx).poll_next(cx) {
+            Poll::Ready(Some(ClientStreamMessage::ShutdownStatus(shutdown)))
         }
         else {
             Poll::Pending
@@ -80,7 +86,8 @@ fn get_normal_close_frame<'a>() -> CloseFrame<'a> {
     }
 }
 
-pub async fn process_client(addr: SocketAddr, websocket: WebSocketStream, tx: mpsc::Sender<Message>) -> Result<(), Box<dyn Error>> {
+pub async fn process_client(addr: SocketAddr, websocket: WebSocketStream, tx: mpsc::Sender<Message>,
+                            shutdown_receiver: watch::Receiver<bool>) -> Result<(), Box<dyn Error>> {
     // Make a channel that the manager task can use to send us messages.
     // This is data that we need to send back to the client over the websocket.
     let (mtx, mut mrx) = mpsc::channel::<ServerCommandResponse>(32);
@@ -98,7 +105,9 @@ pub async fn process_client(addr: SocketAddr, websocket: WebSocketStream, tx: mp
     // Get the websocket channels and construct the stream object we use to wait on results from both the
     // websocket and the manager.
     let (mut ws_tx, ws_rx) = websocket.split();
-    let mut client_stream = ClientStream{ manager_rx: mrx_stream, ws_rx };
+
+    let shutdown_stream = WatchStream::new(shutdown_receiver);
+    let mut client_stream = ClientStream{ manager_rx: mrx_stream, ws_rx, shutdown_rx: shutdown_stream };
 
     // This will loop as long as the websocket is still connected.
     while let Some(result) = client_stream.next().await {
@@ -117,6 +126,12 @@ pub async fn process_client(addr: SocketAddr, websocket: WebSocketStream, tx: mp
             ClientStreamMessage::WebSocketClose => {
                 tx.send(Message::Disconnected(addr)).await?;
                 ws_tx.send(tungstenite::Message::Close(Some(get_normal_close_frame()))).await?;
+            }
+            ClientStreamMessage::ShutdownStatus(shutdown) => {
+                if shutdown {
+                    ws_tx.send(tungstenite::Message::Close(Some(get_normal_close_frame()))).await?;
+                    break;
+                }
             }
         }
     }
