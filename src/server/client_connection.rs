@@ -2,17 +2,22 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
-use super::commands::CommandError;
-use super::server::{Message, ServerCommandResponse, WebSocketStream};
+use super::manager::Message;
+use super::ServerCommandResponse;
+use crate::commands::CommandError;
 use futures_util::{SinkExt, StreamExt};
 use std::error::Error;
 use std::net::SocketAddr;
 use std::pin::Pin;
 use std::task::{Context, Poll};
+use tokio::net::TcpStream;
 use tokio::sync::{mpsc, watch};
+use tokio_native_tls::TlsStream;
 use tokio_stream::wrappers::WatchStream;
 use tungstenite::protocol::frame::coding::CloseCode;
 use tungstenite::protocol::CloseFrame;
+
+type WebSocketStream = tokio_tungstenite::WebSocketStream<TlsStream<TcpStream>>;
 
 struct ClientStream {
     manager_rx: Pin<Box<dyn tokio_stream::Stream<Item = ServerCommandResponse> + Send>>,

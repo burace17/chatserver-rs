@@ -2,7 +2,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
-use super::server::Message;
+use super::manager::Message;
 use futures_util::StreamExt;
 use std::pin::Pin;
 use std::task::{Context, Poll};

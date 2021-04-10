@@ -7,9 +7,7 @@ use signal_hook_tokio::Signals;
 use std::env;
 use tokio::sync::watch;
 
-mod attachments;
 mod channel;
-mod client_connection;
 mod commands;
 mod config_parser;
 mod db;
@@ -34,7 +32,7 @@ async fn main() {
     let config_path = &args[1];
     match config_parser::parse_config(config_path) {
         Ok(config) => {
-            server::start_server(&config, shutdown_receiver).await;
+            server::start(&config, shutdown_receiver).await;
         }
         Err(e) => {
             // TODO: For certain error types there's more info we can give here.
