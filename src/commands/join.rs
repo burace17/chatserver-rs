@@ -2,23 +2,32 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
+use super::CommandError;
 use crate::channel::Channel;
 use crate::server::ChatServer;
-use super::CommandError;
 use boolinator::Boolinator;
+use serde_json::{json, Value};
 use std::collections::hash_map::Entry;
 use std::net::SocketAddr;
-use serde_json::{Value, json};
 
-pub async fn handle(server: &mut ChatServer, client: SocketAddr, json: &Value) -> Result<(), CommandError> {
+pub async fn handle(
+    server: &mut ChatServer,
+    client: SocketAddr,
+    json: &Value,
+) -> Result<(), CommandError> {
     // User must be authenticated for this command to work
     let user = {
         let u = server.get_user(&client).ok_or(CommandError::NeedAuth)?;
         u.clone()
     };
 
-    let channel_name = json["name"].as_str().ok_or(CommandError::InvalidArguments)?.to_lowercase();
-    channel_name.starts_with("#").ok_or(CommandError::InvalidArguments)?;
+    let channel_name = json["name"]
+        .as_str()
+        .ok_or(CommandError::InvalidArguments)?
+        .to_lowercase();
+    channel_name
+        .starts_with("#")
+        .ok_or(CommandError::InvalidArguments)?;
 
     {
         // Mutate the channel
@@ -45,7 +54,12 @@ pub async fn handle(server: &mut ChatServer, client: SocketAddr, json: &Value) -
     });
 
     // The lookup_user closure is the same for both of these calls, but it doesn't compile if I store it in a local.
-    channel.broadcast(|username| server.users.get(&username.to_owned()).cloned(), &json.to_string()).await;
+    channel
+        .broadcast(
+            |username| server.users.get(&username.to_owned()).cloned(),
+            &json.to_string(),
+        )
+        .await;
 
     // Let this user know some information about the channel they joined.
     let json = json!({

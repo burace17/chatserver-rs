@@ -8,10 +8,10 @@ use std::env;
 use tokio::sync::watch;
 
 mod attachments;
+mod channel;
 mod client_connection;
 mod commands;
 mod config_parser;
-mod channel;
 mod db;
 mod message;
 mod server;
@@ -35,7 +35,7 @@ async fn main() {
     match config_parser::parse_config(config_path) {
         Ok(config) => {
             server::start_server(&config, shutdown_receiver).await;
-        },
+        }
         Err(e) => {
             // TODO: For certain error types there's more info we can give here.
             println!("Error parsing config file: {}", e);

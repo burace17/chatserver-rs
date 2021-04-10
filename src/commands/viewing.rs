@@ -2,18 +2,31 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
-use crate::server::ChatServer;
 use super::CommandError;
+use crate::server::ChatServer;
 use boolinator::Boolinator;
+use serde_json::{json, Value};
 use std::net::SocketAddr;
-use serde_json::{Value, json};
 
-pub async fn handle(server: &mut ChatServer, client: SocketAddr, json: &Value) -> Result<(), CommandError> {
-    let new_channel_name = json["channel"].as_str().ok_or(CommandError::InvalidArguments)?.to_lowercase();
+pub async fn handle(
+    server: &mut ChatServer,
+    client: SocketAddr,
+    json: &Value,
+) -> Result<(), CommandError> {
+    let new_channel_name = json["channel"]
+        .as_str()
+        .ok_or(CommandError::InvalidArguments)?
+        .to_lowercase();
     let new_channel_id = {
         let user = server.get_user(&client).ok_or(CommandError::NeedAuth)?;
-        let new_channel = server.channels.get(&new_channel_name).ok_or(CommandError::InvalidArguments)?;
-        new_channel.users.contains(&user.username).ok_or(CommandError::NotInChannel)?;
+        let new_channel = server
+            .channels
+            .get(&new_channel_name)
+            .ok_or(CommandError::InvalidArguments)?;
+        new_channel
+            .users
+            .contains(&user.username)
+            .ok_or(CommandError::NotInChannel)?;
         new_channel.id
     };
 
@@ -24,9 +37,14 @@ pub async fn handle(server: &mut ChatServer, client: SocketAddr, json: &Value) -
         (user.id, no_viewers)
     };
 
-    server.db.clear_last_message_read(user_id, new_channel_id).await?;
+    server
+        .db
+        .clear_last_message_read(user_id, new_channel_id)
+        .await?;
     let user = server.get_user(&client).ok_or(CommandError::NeedAuth)?;
-    server.send_no_viewer_notifications(&no_viewers, &user).await?;
+    server
+        .send_no_viewer_notifications(&no_viewers, &user)
+        .await?;
 
     let json = json!({
         "cmd": "HASVIEWERS",

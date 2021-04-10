@@ -2,14 +2,14 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
+use super::db::DatabaseError;
+use super::server::{ChatServer, ServerCommandResponse};
 use lazy_static::lazy_static;
 use regex::Regex;
-use std::net::SocketAddr;
 use serde_json::Value;
+use std::net::SocketAddr;
 use thiserror::Error;
 use tokio::sync::mpsc::error::SendError;
-use super::server::{ChatServer, ServerCommandResponse};
-use super::db::DatabaseError;
 
 mod history;
 mod ident;
@@ -44,7 +44,7 @@ pub enum CommandError {
     #[error("Did not authenticate in time")]
     DidNotAuth,
     #[error("User is already registered")]
-    AlreadyRegistered
+    AlreadyRegistered,
 }
 
 impl std::convert::From<SendError<ServerCommandResponse>> for CommandError {
@@ -57,7 +57,11 @@ lazy_static! {
     pub static ref USERNAME_PATTERN: Regex = Regex::new("^[A-Za-z0-9_-]*$").unwrap();
 }
 
-pub async fn process_command(server: &mut ChatServer, client: SocketAddr, data: &str) -> Result<(), CommandError> {
+pub async fn process_command(
+    server: &mut ChatServer,
+    client: SocketAddr,
+    data: &str,
+) -> Result<(), CommandError> {
     // Parses the JSON and extracts the incoming command name.
     fn parse_incoming_json(data: &str) -> Result<(Value, String), CommandError> {
         let json = serde_json::from_str::<Value>(data)?;
@@ -74,6 +78,6 @@ pub async fn process_command(server: &mut ChatServer, client: SocketAddr, data: 
         "HISTORY" => history::handle(server, client, &json).await,
         "VIEWING" => viewing::handle(server, client, &json).await,
         "NOTVIEWING" => not_viewing::handle(server, client).await,
-        _ => Err(CommandError::MissingCommand)
+        _ => Err(CommandError::MissingCommand),
     }
 }

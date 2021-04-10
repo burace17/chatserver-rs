@@ -13,9 +13,11 @@ pub async fn start(signals: Signals, shutdown_notifier: watch::Sender<bool>) {
         match s {
             SIGINT | SIGTERM | SIGQUIT => {
                 println!("Shutting down due to signal {}", s);
-                shutdown_notifier.send(true).expect("Failed to send shutdown notification");
+                shutdown_notifier
+                    .send(true)
+                    .expect("Failed to send shutdown notification");
             }
-            _ => unreachable!()
+            _ => unreachable!(),
         }
     }
 }

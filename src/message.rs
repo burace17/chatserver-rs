@@ -12,18 +12,18 @@ pub struct Message {
     time: i64,
     nickname: String,
     content: String,
-    pub attachments: Vec<MessageAttachment>
+    pub attachments: Vec<MessageAttachment>,
 }
 
 impl Message {
     pub fn new(message_id: i64, user: User, time: i64, nickname: &str, content: &str) -> Self {
-        Message{
+        Message {
             message_id,
             user,
             time,
             nickname: nickname.to_string(),
             content: content.to_string(),
-            attachments: Vec::new()
+            attachments: Vec::new(),
         }
     }
 }
@@ -31,11 +31,14 @@ impl Message {
 #[derive(Serialize, Clone)]
 pub struct MessageAttachment {
     url: String,
-    mime: String
+    mime: String,
 }
 
 impl MessageAttachment {
     pub fn new(url: &str, mime: &str) -> Self {
-        MessageAttachment{ url: url.to_string(), mime: mime.to_string() }
+        MessageAttachment {
+            url: url.to_string(),
+            mime: mime.to_string(),
+        }
     }
 }
