@@ -3,8 +3,8 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
 use super::{CommandError, USERNAME_PATTERN};
+use crate::models::User;
 use crate::server::{ChatServer, ServerCommandResponse};
-use crate::user::User;
 use boolinator::Boolinator;
 use serde_json::{json, Value};
 use std::net::SocketAddr;

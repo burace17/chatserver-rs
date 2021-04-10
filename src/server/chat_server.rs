@@ -4,11 +4,11 @@
 
 use super::attachments::AttachmentInfo;
 use super::{Sender, ServerCommandResponse};
-use crate::channel::Channel;
 use crate::commands::CommandError;
 use crate::db::sqlite::SqliteChatDatabase;
 use crate::db::{ChatDatabase, DatabaseError};
-use crate::user::{UnauthedUser, User};
+use crate::models::Channel;
+use crate::models::{UnauthedUser, User};
 use multi_map::MultiMap;
 use serde_json::json;
 use std::collections::HashMap;

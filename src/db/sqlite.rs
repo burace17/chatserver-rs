@@ -3,9 +3,7 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
 use super::{pwhash_interactive, ChatDatabase, DatabaseError};
-use crate::channel::Channel;
-use crate::message::{Message, MessageAttachment};
-use crate::user::User;
+use crate::models::{Channel, Message, MessageAttachment, User};
 use async_trait::async_trait;
 use futures::TryStreamExt;
 use multi_map::MultiMap;

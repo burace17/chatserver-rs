@@ -3,7 +3,7 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
 use super::CommandError;
-use crate::channel::Channel;
+use crate::models::Channel;
 use crate::server::ChatServer;
 use boolinator::Boolinator;
 use serde_json::{json, Value};

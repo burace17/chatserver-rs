@@ -7,14 +7,12 @@ use signal_hook_tokio::Signals;
 use std::env;
 use tokio::sync::watch;
 
-mod channel;
 mod commands;
 mod config_parser;
 mod db;
-mod message;
+mod models;
 mod server;
 mod signal_handler;
-mod user;
 
 #[tokio::main]
 async fn main() {

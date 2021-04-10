@@ -2,8 +2,8 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
-use super::server::Sender;
-use super::server::ServerCommandResponse;
+use crate::server::Sender;
+use crate::server::ServerCommandResponse;
 use serde::ser::SerializeStruct;
 use serde::{Deserialize, Serialize, Serializer};
 use std::collections::{HashMap, HashSet};

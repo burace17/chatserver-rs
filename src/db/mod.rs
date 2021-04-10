@@ -2,9 +2,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
-use super::channel::Channel;
-use super::message::Message;
-use super::user::User;
+use super::models::{Channel, Message, User};
 use async_trait::async_trait;
 use multi_map::MultiMap;
 use sodiumoxide::crypto::pwhash::argon2i13::{
