@@ -23,15 +23,15 @@ mod viewing;
 pub enum CommandError {
     #[error("Missing command")]
     MissingCommand,
-    #[error("Invalid JSON")]
+    #[error("JSON Error: {0}")]
     InvalidJSON(#[from] serde_json::Error),
     #[error("Invalid command arguments")]
     InvalidArguments,
     #[error("Invalid username or password")]
     InvalidUsername,
-    #[error("Internal server error")]
+    #[error("Send Failed: {0}")]
     SendFailed(Box<SendError<ServerCommandResponse>>),
-    #[error("Internal server error")]
+    #[error("{0}")]
     LoginDBMSError(#[from] DatabaseError),
     #[error("Invalid username or password")]
     LoginFailed,

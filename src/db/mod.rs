@@ -13,7 +13,7 @@ use thiserror::Error;
 
 #[derive(Debug, Error)]
 pub enum DatabaseError {
-    #[error("DBMS Error")]
+    #[error("DBMS Error: {0}")]
     DBMSError(#[from] sqlx::Error),
     #[error("Password hashing error")]
     PasswordHashError,
@@ -39,10 +39,18 @@ pub trait ChatDatabase: Send + Sync {
         nickname: &str,
         message: &str,
     ) -> Result<i64, DatabaseError>;
-    async fn get_channel_history(
+    async fn get_channel_messages(
         &self,
         channel_id: i64,
         limit: i64,
+        users: &MultiMap<String, i64, User>,
+    ) -> Result<Vec<Message>, DatabaseError>;
+    async fn get_channel_messages_range(
+        &self,
+        channel_id: i64,
+        reference_message_id: i64,
+        messages_before: i64,
+        messages_after: i64,
         users: &MultiMap<String, i64, User>,
     ) -> Result<Vec<Message>, DatabaseError>;
     async fn get_last_message_read(
@@ -66,6 +74,7 @@ pub trait ChatDatabase: Send + Sync {
         url: &str,
         mime: &str,
     ) -> Result<(), DatabaseError>;
+    async fn get_message_count_after(&self, channel_id: i64, message_id: i64) -> Result<i64, DatabaseError>;
 }
 
 pub fn pwhash_interactive(bytes: &[u8]) -> Result<HashedPassword, ()> {

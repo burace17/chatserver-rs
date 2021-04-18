@@ -31,16 +31,38 @@ pub async fn handle(
     struct HistoryValue {
         messages: Vec<Message>,
         last_read_message: Option<i64>,
+        messages_after: i64
     }
 
     for channel in channels {
-        let messages = server
-            .db
-            .get_channel_history(channel.id, 50, &server.users)
-            .await?;
+        let last_read_message = server.db.get_last_message_read(user.id, channel.id).await?;
+        let messages = {
+            if let Some(last_read_message_id) = last_read_message {
+                server
+                    .db
+                    .get_channel_messages_range(channel.id, last_read_message_id, 50, 25, &server.users)
+                    .await?
+            }
+            else {
+                server
+                    .db
+                    .get_channel_messages(channel.id, 50, &server.users)
+                    .await?
+            }
+        };
+
+        let messages_after = {
+            if let Some(last_read_message_id) = last_read_message {
+                server.db.get_message_count_after(channel.id, last_read_message_id).await?
+            }
+            else {
+                0
+            }
+        };
         let value = HistoryValue {
             messages,
-            last_read_message: server.db.get_last_message_read(user.id, channel.id).await?,
+            last_read_message,
+            messages_after
         };
         all_messages.insert(&channel.name, value);
     }

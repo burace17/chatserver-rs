@@ -21,12 +21,40 @@ impl SqliteChatDatabase {
     }
 }
 
+async fn extract_message(
+    row: &<sqlx::Sqlite as sqlx::Database>::Row,
+    messages: &mut HashMap<i64, Message>,
+    users: &MultiMap<String, i64, User>
+) -> Result<(), DatabaseError> {
+    let user_id: i64 = row.try_get("user_id")?;
+    let message_id: i64 = row.try_get("id")?;
+    let time: i64 = row.try_get("time")?;
+    let nickname: &str = row.try_get("nickname")?;
+    let content: &str = row.try_get("content")?;
+    let url: Option<&str> = row.try_get("url")?;
+    let mime: Option<&str> = row.try_get("mime")?;
+
+    if let Some(user) = users.get_alt(&user_id) {
+        let message = messages.entry(message_id).or_insert_with(|| {
+            Message::new(message_id, user.clone(), time, &nickname, &content)
+        });
+
+        if url.is_some() && mime.is_some() {
+            message
+                .attachments
+                .push(MessageAttachment::new(&url.unwrap(), &mime.unwrap()));
+        }
+    }
+
+    Ok(())
+}
+
 #[async_trait]
 impl ChatDatabase for SqliteChatDatabase {
     async fn setup_database(&self) -> Result<(), DatabaseError> {
         let mut conn = self.pool.acquire().await?;
         (&mut conn)
-            .execute(include_str!("table_initialization.sql"))
+            .execute(include_str!("sql/table_initialization.sql"))
             .await?;
         Ok(())
     }
@@ -139,41 +167,49 @@ impl ChatDatabase for SqliteChatDatabase {
         .await?;
         Ok(res.last_insert_rowid())
     }
-    async fn get_channel_history(
+
+    async fn get_channel_messages(
         &self,
         channel_id: i64,
         limit: i64,
         users: &MultiMap<String, i64, User>,
     ) -> Result<Vec<Message>, DatabaseError> {
         let mut conn = self.pool.acquire().await?;
-        // This should be expressible using query! but I kept getting compile errors.
-        let mut res = sqlx::query("SELECT messages.id,messages.user_id,messages.time,messages.nickname,messages.content,message_attachments.url,message_attachments.mime
-            FROM messages LEFT JOIN message_attachments ON messages.id = message_attachments.message_id WHERE channel_id = ? ORDER BY time DESC LIMIT ?;")
+        let mut res = sqlx::query(include_str!("sql/history.sql"))
             .bind(channel_id)
             .bind(limit)
             .fetch(&mut conn);
 
         let mut messages: HashMap<i64, Message> = HashMap::new();
         while let Some(row) = res.try_next().await? {
-            let user_id: i64 = row.try_get("user_id")?;
-            let message_id: i64 = row.try_get("id")?;
-            let time: i64 = row.try_get("time")?;
-            let nickname: &str = row.try_get("nickname")?;
-            let content: &str = row.try_get("content")?;
-            let url: Option<&str> = row.try_get("url")?;
-            let mime: Option<&str> = row.try_get("mime")?;
+            extract_message(&row, &mut messages, &users).await?;
+        }
 
-            if let Some(user) = users.get_alt(&user_id) {
-                let message = messages.entry(message_id).or_insert_with(|| {
-                    Message::new(message_id, user.clone(), time, &nickname, &content)
-                });
+        // TODO: use into_values() once stable
+        Ok(messages.values().map(|m| m.clone()).collect())
+    }
+    async fn get_channel_messages_range(
+        &self,
+        channel_id: i64,
+        reference_message_id: i64,
+        messages_before: i64,
+        messages_after: i64,
+        users: &MultiMap<String, i64, User>,
+    ) -> Result<Vec<Message>, DatabaseError> {
+        let mut conn = self.pool.acquire().await?;
+        // This should be expressible using query! but I kept getting compile errors.
+        let mut res = sqlx::query(include_str!("sql/history_range.sql"))
+                    .bind(channel_id)
+                    .bind(reference_message_id)
+                    .bind(messages_before)
+                    .bind(channel_id)
+                    .bind(reference_message_id)
+                    .bind(messages_after)
+                    .fetch(&mut conn);
 
-                if url.is_some() && mime.is_some() {
-                    message
-                        .attachments
-                        .push(MessageAttachment::new(&url.unwrap(), &mime.unwrap()));
-                }
-            }
+        let mut messages: HashMap<i64, Message> = HashMap::new();
+        while let Some(row) = res.try_next().await? {
+            extract_message(&row, &mut messages, &users).await?;
         }
 
         // TODO: use into_values() once stable
@@ -194,7 +230,7 @@ impl ChatDatabase for SqliteChatDatabase {
         .await?;
 
         if let Some(record) = res {
-            Ok(Some(record.message_id))
+            Ok(record.message_id)
         } else {
             Ok(None)
         }
@@ -205,32 +241,29 @@ impl ChatDatabase for SqliteChatDatabase {
         channel_id: i64,
     ) -> Result<Option<i64>, DatabaseError> {
         let mut conn = self.pool.acquire().await?;
-        // I'm going to change this soon so we accept a message_id rather than just getting the last id.
-        // We'll need that for handling infinite scrolling properly.
 
         let message_id = {
             let res = sqlx::query!(
                 "SELECT MAX(id) as message_id FROM messages WHERE channel_id = ?;",
-                channel_id
-            )
-            .fetch_optional(&mut conn)
-            .await?;
-            if let Some(record) = res {
-                Some(record.message_id)
-            } else {
-                None
-            }
+                channel_id)
+                .fetch_one(&mut conn)
+                .await?;
+            res.message_id
         };
 
-        sqlx::query!(
+        if message_id > 0 {
+            sqlx::query!(
             "REPLACE INTO user_last_read_messages VALUES (?, ?, ?);",
             user_id,
             channel_id,
-            message_id
-        )
-        .execute(&mut conn)
-        .await?;
-        Ok(message_id)
+            message_id)
+                .execute(&mut conn)
+                .await?;
+            Ok(Some(message_id))
+        }
+        else {
+            Ok(None)
+        }
     }
     async fn clear_last_message_read(
         &self,
@@ -263,5 +296,13 @@ impl ChatDatabase for SqliteChatDatabase {
         .execute(&mut conn)
         .await?;
         Ok(())
+    }
+
+    async fn get_message_count_after(&self, channel_id: i64, message_id: i64) -> Result<i64, DatabaseError> {
+        let mut conn = self.pool.acquire().await?;
+        let res = sqlx::query!("SELECT COUNT(id) AS count FROM messages WHERE channel_id = ? AND id > ?;", channel_id, message_id)
+            .fetch_one(&mut conn)
+            .await?;
+        Ok(res.count.into()) // should be an i64?
     }
 }

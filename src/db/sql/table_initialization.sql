@@ -16,7 +16,7 @@ CREATE TABLE IF NOT EXISTS messages(id INTEGER PRIMARY KEY AUTOINCREMENT,
                                  FOREIGN KEY(channel_id) REFERENCES channels(id) ON DELETE CASCADE);
 CREATE TABLE IF NOT EXISTS user_last_read_messages(user_id INTEGER NOT NULL,
                                  channel_id INTEGER NOT NULL,
-                                 message_id INTEGER NOT NULL,
+                                 message_id INTEGER,
                                  UNIQUE(user_id, channel_id, message_id),
                                  FOREIGN KEY(message_id) REFERENCES messages(id) ON DELETE CASCADE,
                                  FOREIGN KEY(user_id, channel_id) REFERENCES user_channels(user_id, channel_id) ON DELETE CASCADE);
